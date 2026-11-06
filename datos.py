@@ -75,9 +75,11 @@ def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
     """Unifica tipos y orden de un DataFrame tidy de precios.
 
     Fechas sin zona horaria, precios como ``float``, volumen como entero y
-    filas ordenadas por ticker y fecha.
+    filas ordenadas por ticker y fecha. Las columnas extra (por ejemplo
+    ``completo``) se conservan al final.
     """
-    df = df[COLUMNAS].copy()
+    extras = [c for c in df.columns if c not in COLUMNAS]
+    df = df[COLUMNAS + extras].copy()
     df["fecha"] = pd.to_datetime(df["fecha"]).dt.tz_localize(None).dt.normalize().astype("datetime64[ns]")
     df["ticker"] = df["ticker"].astype(str)
     for col in ["open", "high", "low", "close"]:
@@ -318,9 +320,16 @@ def resamplear_ohlc(df: pd.DataFrame, periodicidad: str) -> pd.DataFrame:
     ``close`` = último valor y ``volume`` = suma.
 
     La fecha de cada fila es el **último día calendario** del periodo
-    (por ejemplo, 2024-01-31 para enero de 2024). El periodo en curso puede
-    estar incompleto: si hoy es 5 de noviembre, la vela de noviembre solo
-    tiene cinco días de datos.
+    (por ejemplo, 2024-01-31 para enero de 2024).
+
+    Periodo incompleto: si los datos terminan antes del último día hábil del
+    periodo (por ejemplo, el 5 de noviembre para la vela de noviembre), ese
+    último periodo se marca con ``completo = False``. Su "cierre" no es un
+    cierre de mes, así que las métricas lo excluyen (ver
+    ``velas_completas``). Solo el último periodo de cada ticker puede quedar
+    incompleto. Si el último día hábil del calendario fue feriado, el periodo
+    puede aparecer como incompleto hasta que llegue el primer dato del
+    periodo siguiente.
 
     Args:
         df: Precios diarios en formato tidy.
@@ -328,13 +337,15 @@ def resamplear_ohlc(df: pd.DataFrame, periodicidad: str) -> pd.DataFrame:
             de pandas ``"ME"`` o ``"YE"``).
 
     Returns:
-        DataFrame tidy con las mismas columnas, una fila por periodo y ticker.
+        DataFrame tidy con las mismas columnas más ``completo`` (``bool``),
+        una fila por periodo y ticker.
 
     Raises:
         ValueError: Si la periodicidad no es válida.
 
     Example:
         >>> mensual = resamplear_ohlc(precios_diarios, "Mensual")
+        >>> mensual[["fecha", "ticker", "close", "completo"]].tail(2)
     """
     reglas_validas = {nombre: p["regla"] for nombre, p in config.PERIODICIDADES.items()}
     if periodicidad in reglas_validas:
@@ -346,17 +357,71 @@ def resamplear_ohlc(df: pd.DataFrame, periodicidad: str) -> pd.DataFrame:
             f"Periodicidad '{periodicidad}' no válida. Usa una de: {list(reglas_validas)}"
         )
 
+    # Último día HÁBIL de cada periodo (lunes a viernes; no conoce feriados).
+    fin_habil = {"ME": pd.offsets.BMonthEnd(), "YE": pd.offsets.BYearEnd()}[regla]
+
     agregacion = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
     partes: list[pd.DataFrame] = []
     for ticker, grupo in df.groupby("ticker", sort=True):
         velas = grupo.set_index("fecha")[list(agregacion)].resample(regla).agg(agregacion)
         velas = velas.dropna(subset=["close"])  # periodos sin operaciones
+        if velas.empty:
+            continue
         velas["ticker"] = ticker
+        velas["completo"] = True
+        ultimo_dato = grupo["fecha"].max()
+        if ultimo_dato < fin_habil.rollback(velas.index[-1]):
+            velas.loc[velas.index[-1], "completo"] = False
         partes.append(velas.reset_index())
 
     if not partes:
-        return _df_vacio()
+        vacio = _df_vacio()
+        vacio["completo"] = pd.Series(dtype=bool)
+        return vacio
     return _normalizar(pd.concat(partes, ignore_index=True))
+
+
+def velas_completas(velas: pd.DataFrame) -> pd.DataFrame:
+    """Quita los periodos incompletos (por ejemplo, el mes en curso).
+
+    Las métricas (CAGR, volatilidad, Sharpe ratio, drawdown, beta y backtest)
+    se calculan solo con periodos completos: el "cierre" de un mes que no ha
+    terminado no es un cierre de mes.
+
+    Args:
+        velas: Resultado de ``resamplear_ohlc`` (con columna ``completo``).
+
+    Returns:
+        Copia de ``velas`` solo con las filas donde ``completo`` es ``True``.
+
+    Example:
+        >>> completas = velas_completas(resamplear_ohlc(diario, "Mensual"))
+    """
+    if "completo" not in velas.columns:
+        return velas.copy()
+    return velas.loc[velas["completo"]].reset_index(drop=True)
+
+
+def dias_sin_volumen(df: pd.DataFrame, ticker: str) -> tuple[int, int]:
+    """Cuenta los días con volumen 0 de un ticker (señal de baja liquidez).
+
+    Un día con volumen 0 significa que nadie operó la acción; Yahoo Finance
+    suele repetir el precio del día anterior. Muchos días así producen una
+    serie "congelada" que subestima la volatilidad.
+
+    Args:
+        df: Precios **diarios** en formato tidy.
+        ticker: Ticker a revisar.
+
+    Returns:
+        Tupla ``(dias_sin_volumen, dias_totales)``.
+
+    Example:
+        >>> dias_sin_volumen(diario, "AMXB.MX")
+        (829, 2978)
+    """
+    volumen = df.loc[df["ticker"] == ticker, "volume"]
+    return int((volumen == 0).sum()), int(len(volumen))
 
 
 def serie(df: pd.DataFrame, ticker: str, columna: str = "close") -> pd.Series:

@@ -32,7 +32,7 @@ Agrega también una línea en el encabezado (docstring de módulo) de cada archi
 
 ## 4. Stack
 
-- Python 3.11+
+- Python 3.12+ (numpy 2.5.4 requiere Python ≥ 3.12; decisión del autor, 2026-11-05)
 - `streamlit`, `yfinance`, `pandas`, `numpy`, `plotly`, `pytest`.
 - **Fija versiones exactas** en `requirements.txt` con las versiones que instales y verifiques (`paquete==x.y.z`). No uses rangos abiertos.
 - Nada de librerías de análisis técnico (ta-lib, etc.): todas las métricas se implementan a mano en `metricas.py` para que sean didácticas.
@@ -96,9 +96,17 @@ TICKER_DEFAULT = "NVDA"
 PERIODICIDAD_DEFAULT = "Mensual"        # "Mensual" o "Anual"
 VENTANA_SMA_DEFAULT = 10                # en periodos de la periodicidad elegida
 CAPITAL_INICIAL = 10_000
-TASA_LIBRE_RIESGO_ANUAL = 0.07          # Supuesto basado en CETES; actualizar y documentar la fecha
+TASAS_LIBRE_RIESGO = {                  # Una tasa anual por moneda, cada una con fuente y fecha
+    "MXN": {...},                       # CETES 28 días (Banxico, SIE)
+    "USD": {...},                       # T-bill 3 meses (FRED, serie DTB3)
+    "KRW": {...},                       # Tasa base (Bank of Korea)
+}
+AVISOS_DATOS = {"AMXB.MX": "..."}       # Avisos de calidad de datos por ticker
 VELAS_ESTILO = "up"                     # "up" = dorado/rojo; "clasico" = verde/rojo
 ```
+
+- **Tasas libres de riesgo (decisión del autor, 2026-11-05):** una por moneda, cada una con valor, instrumento, fuente, URL y fecha. No se inventan valores: si no se pueden verificar, se dejan marcadas para que el autor las llene. Usar una tasa constante para todo el periodo es una simplificación y se aclara en la app.
+- **AMXB.MX (decisión del autor, 2026-11-05):** se conserva, con aviso en la app y en el README. En Yahoo Finance tiene muchos días sin volumen y con el precio repetido hasta agosto de 2023; eso baja artificialmente la volatilidad.
 
 - **Verifica cada ticker con yfinance** al construir. Si alguno no descarga (por ejemplo `000660.KS` o alguno `.MX`), busca la variante correcta, corrígela y anótalo en la bitácora y en el README.
 - Cada acción se compara **solo contra el benchmark de su mercado** y todo se calcula en **moneda local**. No mezcles monedas ni conviertas tipo de cambio en esta versión; explícalo en la app y en el README.
@@ -108,7 +116,7 @@ VELAS_ESTILO = "up"                     # "up" = dorado/rojo; "clasico" = verde/
 1. `descargar_precios(tickers, inicio, fin) -> pd.DataFrame` con yfinance, **precios ajustados** (usa `auto_adjust=True` o la columna Adj Close, y documenta cuál). Formato **tidy**: columnas `fecha, ticker, open, high, low, close, volume`, frecuencia diaria.
 2. `cargar_respaldo(ruta) -> pd.DataFrame` lee `data/respaldo_precios.csv` (mismo formato tidy).
 3. `obtener_precios(...) -> tuple[pd.DataFrame, dict]`: intenta yfinance; si falla, si regresa vacío o si faltan tickers, usa el respaldo **solo para lo que falte** y regresa un dict de metadatos: `{"fuente": "yfinance" | "respaldo" | "mixta", "fecha_datos": <última fecha>, "tickers_respaldo": [...]}`.
-4. `resamplear_ohlc(df, periodicidad) -> pd.DataFrame`: diario → mensual (`"ME"`) o anual (`"YE"`) con `open=first, high=max, low=min, close=last, volume=sum`, **por ticker**.
+4. `resamplear_ohlc(df, periodicidad) -> pd.DataFrame`: diario → mensual (`"ME"`) o anual (`"YE"`) con `open=first, high=max, low=min, close=last, volume=sum`, **por ticker**. Agrega la columna `completo` (`False` para el último periodo si todavía no termina, por ejemplo el mes o año en curso).
 5. En `app.py`, envuelve la descarga con `st.cache_data(ttl=6 * 3600)`.
 
 ### Respaldo CSV
@@ -141,6 +149,10 @@ Funciones puras sobre `pd.Series` indexadas por fecha, con docstrings en españo
 
 Validaciones: si hay menos de 2 años de datos, o en periodicidad anual hay menos periodos que la ventana de la SMA, regresa `NaN` y una advertencia clara (la app la muestra en lugar de fallar).
 
+**Periodo incompleto (decisión del autor, 2026-11-05):** el periodo en curso se excluye de CAGR, volatilidad, Sharpe, drawdown y backtest. Solo se muestra en «Velas», con estilo distinto y la etiqueta "periodo en curso".
+
+**Tasa libre de riesgo:** cada activo usa la tasa de su moneda (`TASAS_LIBRE_RIESGO`).
+
 ## 9. La app (`app.py`)
 
 ### Barra lateral
@@ -150,7 +162,7 @@ Validaciones: si hay menos de 2 años de datos, o en periodicidad anual hay meno
 - Rango de fechas (default: `FECHA_INICIO` a hoy).
 - Periodicidad: Mensual / Anual.
 - Ventana de la SMA (slider, 3 a 24 periodos).
-- Tasa libre de riesgo anual (input, default de config, con nota "supuesto basado en CETES").
+- Tasas libres de riesgo anuales por moneda (MXN, USD, KRW): inputs con el default de config, mostrando instrumento, fuente y fecha.
 - Indicador de fuente de datos (yfinance o respaldo, con fecha).
 - Disclaimer breve al pie.
 
@@ -158,9 +170,11 @@ Validaciones: si hay menos de 2 años de datos, o en periodicidad anual hay meno
 Título "Acciones 101", subtítulo "La bolsa no es un casino: es análisis", aviso educativo de una línea y una fila de **KPIs** del ticker principal: CAGR, Volatilidad, Máx. drawdown, Sharpe ratio, Beta vs su benchmark. Formato: porcentajes con 1 decimal; Sharpe y beta con 2.
 
 ### Pestañas (nombres exactos)
-Cada pestaña incluye un `st.expander("¿Qué estoy viendo?")` con explicación breve, la fórmula (`st.latex`) y una pregunta para reflexionar.
+Cada pestaña incluye un `st.expander("¿Qué estoy viendo?")` con explicación breve, la fórmula (`st.latex`) y una pregunta para reflexionar. Donde se explique el Sharpe ratio, aclarar que usar una tasa libre de riesgo constante para todo el periodo es una simplificación.
 
-1. **«Velas»** — velas OHLC (Plotly `Candlestick`) de la periodicidad elegida + línea SMA. Sin rangeslider.
+Si el ticker principal (o uno de los comparados) tiene aviso en `AVISOS_DATOS`, mostrarlo de forma visible.
+
+1. **«Velas»** — velas OHLC (Plotly `Candlestick`) de la periodicidad elegida + línea SMA. Sin rangeslider. Interruptor de escala logarítmica. El periodo en curso se muestra con estilo distinto y la etiqueta "periodo en curso"; la SMA usa solo periodos completos.
 2. **«Rendimiento»** — crecimiento de `CAPITAL_INICIAL` para los tickers seleccionados desde la misma fecha, con etiqueta del valor final de cada línea. Aviso si se mezclan monedas.
 3. **«Riesgo»** — dispersión riesgo vs rendimiento (x = volatilidad anualizada, y = CAGR) de todos los tickers y benchmarks; color por mercado; benchmarks con otro marcador. Tabla con las métricas debajo.
 4. **«Drawdown»** — panel superior con precio y máximo previo (línea punteada), panel inferior con área de drawdown; anotación del máximo drawdown y su fecha; tiempo de recuperación en texto.
@@ -221,7 +235,7 @@ Secciones, en este orden:
 1. Título y una línea de descripción + espacio para la liga de la app publicada y una captura (`docs/captura.png`, opcional).
 2. **Aviso educativo** y **Código generado con IA** (textos de la sección 3, destacados).
 3. Qué muestra el dashboard: las 6 métricas en una tabla (métrica, pregunta que responde, fórmula, interpretación, columna en el CSV).
-4. Instalación local (venv, `pip install -r requirements.txt`, `streamlit run app.py`).
+4. Instalación local (Python 3.12+, venv, `pip install -r requirements.txt`, `streamlit run app.py`).
 5. **Cómo agregar un ticker:** ejemplo concreto editando `TICKERS` en `config.py` (por ejemplo `"MSFT"` con benchmark `"^GSPC"`), cómo verificar que yfinance lo encuentra y cómo regenerar el respaldo.
 6. **Cómo agregar una nueva métrica o variable:** ejemplo completo paso a paso con el **Sortino ratio**: función en `metricas.py` con docstring, prueba en `tests/`, inclusión en `resumen_metricas` y en `tabla_tidy_para_bi`, y KPI en `app.py`. Incluye el código del ejemplo.
 7. **Cómo cambiar parámetros:** fechas, periodicidad, ventana SMA, tasa libre de riesgo, estilo de velas.
@@ -229,7 +243,7 @@ Secciones, en este orden:
 9. **Usar los datos en Looker Studio, Power BI o Tableau:** exportar desde la pestaña «Datos» y qué conviene precalcular en Python.
 10. **Publicar en Streamlit Community Cloud** paso a paso (repo público en GitHub → share.streamlit.io → New app → `app.py`).
 11. Estructura del repo.
-12. Limitaciones: moneda local sin tipo de cambio, sesgo de supervivencia, sin costos ni impuestos, datos de Yahoo Finance, tasa libre de riesgo como supuesto.
+12. Limitaciones: moneda local sin tipo de cambio, sesgo de supervivencia, sin costos ni impuestos, datos de Yahoo Finance (incluida la calidad de datos de AMXB.MX), tasa libre de riesgo constante por moneda como supuesto, periodo en curso excluido de las métricas.
 13. Licencia MIT y créditos (datos: Yahoo Finance vía `yfinance`, uso educativo).
 
 ## 13. Plan de trabajo

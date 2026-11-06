@@ -10,6 +10,7 @@ Este archivo solo arma la interfaz y las gráficas. Las fórmulas viven en
 
 from __future__ import annotations
 
+import math
 from datetime import date
 
 import pandas as pd
@@ -106,23 +107,47 @@ def estilo_base(fig: go.Figure, colores: dict[str, str], alto: int = 520) -> go.
 
 def figura_velas(
     velas: pd.DataFrame,
+    en_curso: pd.DataFrame,
     linea_sma: pd.Series,
     ventana: int,
     moneda: str,
     periodicidad: str,
     escala_log: bool,
     colores: dict[str, str],
+    etiqueta_en_curso: str = "periodo en curso",
 ) -> go.Figure:
-    """Gráfica de velas OHLC con la línea de la SMA (sin rangeslider)."""
+    """Gráfica de velas OHLC con la línea de la SMA (sin rangeslider).
+
+    Las velas completas van en un trazo y el periodo incompleto en otro,
+    translúcido y con una etiqueta de texto, para que no se confundan.
+    """
     c = colores_velas(colores)
     formato_fecha = "%Y-%m" if periodicidad == "Mensual" else "%Y"
+    estilo = dict(
+        increasing=dict(fillcolor=c["sube_relleno"], line=dict(color=c["sube_borde"], width=1)),
+        decreasing=dict(fillcolor=c["baja_relleno"], line=dict(color=c["baja_borde"], width=1)),
+    )
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
         x=velas["fecha"], open=velas["open"], high=velas["high"],
-        low=velas["low"], close=velas["close"], name="Velas OHLC",
-        increasing=dict(fillcolor=c["sube_relleno"], line=dict(color=c["sube_borde"], width=1)),
-        decreasing=dict(fillcolor=c["baja_relleno"], line=dict(color=c["baja_borde"], width=1)),
+        low=velas["low"], close=velas["close"], name="Velas OHLC", **estilo,
     ))
+    if not en_curso.empty:
+        fila = en_curso.iloc[-1]
+        fig.add_trace(go.Candlestick(
+            x=en_curso["fecha"], open=en_curso["open"], high=en_curso["high"],
+            low=en_curso["low"], close=en_curso["close"],
+            name=etiqueta_en_curso.capitalize(), opacity=0.4, **estilo,
+        ))
+        # Etiqueta DEBAJO de la vela (arriba suele chocar con las mechas previas).
+        # En un eje logarítmico, Plotly ubica las anotaciones en log10(y).
+        y_texto = math.log10(fila["low"]) if escala_log else fila["low"]
+        fig.add_annotation(
+            x=fila["fecha"], y=y_texto, text=etiqueta_en_curso, showarrow=True,
+            arrowhead=0, arrowcolor=colores["texto_secundario"], ax=0, ay=40,
+            xanchor="right", font=dict(color=colores["texto_secundario"], size=12),
+            bgcolor=colores["fondo"], borderpad=2,  # fondo para que se lea sobre líneas
+        )
     fig.add_trace(go.Scatter(
         x=linea_sma.index, y=linea_sma.values, mode="lines", name=f"SMA {ventana}",
         line=dict(color=colores["texto"], width=2),
@@ -214,6 +239,15 @@ elif meta["fuente"] == "mixta":
 if meta["tickers_sin_datos"]:
     st.error(f"Sin datos en ninguna fuente para: {', '.join(meta['tickers_sin_datos'])}.")
 
+if ticker in config.AVISOS_DATOS:
+    sin_volumen, dias = datos.dias_sin_volumen(datos.filtrar_precios(precios, [ticker], inicio, fin), ticker)
+    proporcion = f" ({sin_volumen / dias:.0%})" if dias else ""
+    st.warning(
+        f"**Calidad de datos de {ticker}.** {config.AVISOS_DATOS[ticker]} "
+        f"En el rango elegido, {sin_volumen:,} de {dias:,} días{proporcion} no tienen volumen.",
+        icon="⚠️",
+    )
+
 # ---------------------------------------------------------------------------
 # Pestañas (en la Etapa 3 se agregan las demás)
 # ---------------------------------------------------------------------------
@@ -228,7 +262,16 @@ with tab_velas:
     if velas.empty:
         st.warning(f"No hay datos de {ticker} en el rango elegido.")
     else:
-        linea_sma = metricas.sma(datos.serie(velas, ticker), ventana)
+        # La SMA (y todas las métricas) usan solo periodos completos.
+        completas = datos.velas_completas(velas)
+        en_curso = velas.loc[~velas["completo"]]
+        linea_sma = metricas.sma(datos.serie(completas, ticker), ventana)
+        # "En curso" si el periodo incompleto incluye el día de hoy; si no, lo cortó el rango de fechas.
+        etiqueta_en_curso = (
+            "periodo en curso"
+            if not en_curso.empty and en_curso["fecha"].iloc[-1] >= pd.Timestamp(hoy)
+            else "periodo incompleto"
+        )
 
         st.markdown(
             f"**{etiqueta(ticker)}** · velas {adjetivo} y SMA de {ventana} {unidad} · "
@@ -239,17 +282,27 @@ with tab_velas:
             help="En escala logarítmica, la misma distancia vertical representa el mismo "
                  "cambio porcentual. Útil cuando el precio se multiplicó muchas veces.",
         )
-        if len(velas) < ventana:
+        if len(completas) < ventana:
             st.info(
-                f"La SMA de {ventana} {unidad} necesita al menos {ventana} velas y solo hay "
-                f"{len(velas)}. Reduce la ventana o amplía el rango de fechas."
+                f"La SMA de {ventana} {unidad} necesita al menos {ventana} periodos completos y "
+                f"solo hay {len(completas)}. Reduce la ventana o amplía el rango de fechas."
             )
-        fig = figura_velas(velas, linea_sma, ventana, moneda, periodicidad, escala_log, colores)
+        fig = figura_velas(completas, en_curso, linea_sma, ventana, moneda, periodicidad,
+                           escala_log, colores, etiqueta_en_curso)
         st.plotly_chart(fig, width="stretch", theme=None, config={"displaylogo": False})
-        st.caption(
-            f"Último dato: {velas['fecha'].iloc[-1]:%Y-%m} (cierre del {diario['fecha'].max():%Y-%m-%d}). "
-            "La última vela puede corresponder a un periodo todavía en curso."
-        )
+        ultimo_dia = diario["fecha"].max()
+        if en_curso.empty:
+            st.caption(f"Datos hasta el {ultimo_dia:%Y-%m-%d}. Todas las velas son periodos completos.")
+        elif etiqueta_en_curso == "periodo en curso":
+            st.caption(
+                f"Datos hasta el {ultimo_dia:%Y-%m-%d}. La vela translúcida es el periodo en curso: "
+                "todavía no cierra, así que no entra en la SMA ni en las métricas."
+            )
+        else:
+            st.caption(
+                f"Datos hasta el {ultimo_dia:%Y-%m-%d}. La vela translúcida es un periodo incompleto "
+                "(el rango de fechas lo corta a la mitad), así que no entra en la SMA ni en las métricas."
+            )
 
     with st.expander("¿Qué estoy viendo?"):
         st.markdown(
@@ -260,6 +313,8 @@ precios (**OHLC**: *open*, *high*, *low*, *close*):
 - El **cuerpo** va del precio de apertura (*open*) al de cierre (*close*).
 - Las **mechas** llegan al máximo (*high*) y al mínimo (*low*) del periodo.
 - **Dorada:** el periodo cerró por encima de su apertura. **Roja:** cerró por debajo.
+- **Translúcida:** el periodo en curso. Todavía no cierra, así que se excluye de la SMA y
+  de todas las métricas (CAGR, volatilidad, Sharpe ratio, drawdown y backtest).
 
 La línea **SMA** (*simple moving average*) es el promedio de los últimos *n* cierres.
 Suaviza el ruido y muestra la tendencia: si el precio está por encima de su SMA,

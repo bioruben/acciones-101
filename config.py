@@ -30,6 +30,20 @@ TICKERS: dict[str, dict[str, str]] = {
     "000660.KS":   {"nombre": "SK hynix",          "mercado": "Corea",  "moneda": "KRW", "benchmark": "^KS11"},
 }
 
+# Avisos de calidad de datos que la app muestra cuando se elige el ticker.
+# Para agregar uno: ticker -> texto. Se revisó con los datos del respaldo CSV.
+AVISOS_DATOS: dict[str, str] = {
+    "AMXB.MX": (
+        "En los datos de Yahoo Finance, de 2015 a agosto de 2023 la serie B de "
+        "América Móvil tiene muchos días sin volumen (nadie la operó) y en casi "
+        "todos ellos se repite el precio del día anterior. Hasta el 16 de marzo "
+        "de 2023 la serie más operada era la L, que ese día se convirtió en "
+        "serie B. Los precios repetidos hacen que la acción parezca más estable "
+        "de lo que fue: **bajan artificialmente la volatilidad** (y tienden a "
+        "bajar también la beta y la correlación con el IPC)."
+    ),
+}
+
 # Índices de referencia (benchmarks), uno por mercado.
 BENCHMARKS: dict[str, dict[str, str]] = {
     "^MXX":  {"nombre": "S&P/BMV IPC", "moneda": "MXN"},
@@ -61,12 +75,35 @@ VENTANA_SMA_MIN = 3                     # límites del slider en la barra latera
 VENTANA_SMA_MAX = 24
 CAPITAL_INICIAL = 10_000                # monto hipotético para las curvas de crecimiento
 
-# Tasa libre de riesgo anual. Supuesto basado en CETES.
-# El valor 0.07 viene de CLAUDE.md; NO se verificó contra la tasa vigente.
-# Antes de clase, revisa la tasa de CETES a 28 días en Banxico, actualiza el
-# valor y la fecha de abajo.
-TASA_LIBRE_RIESGO_ANUAL = 0.07
-FECHA_TASA_LIBRE_RIESGO = "2026-11-05"  # fecha en que se fijó el supuesto
+# Tasas libres de riesgo ANUALES, una por moneda. Cada acción usa la tasa de
+# su moneda para el Sharpe ratio y para el backtest (rendimiento fuera del mercado).
+# Supuesto importante: se usa una tasa CONSTANTE para todo el periodo, aunque en
+# la realidad cambió mucho desde 2015. Es una simplificación didáctica.
+# Para actualizar: consulta la fuente, cambia "tasa" y "fecha" y haz commit.
+TASAS_LIBRE_RIESGO: dict[str, dict[str, float | str]] = {
+    "MXN": {
+        "tasa": 0.0650,
+        "instrumento": "CETES 28 días (resultado de la subasta primaria)",
+        "fuente": "Banco de México, Sistema de Información Económica (SIE)",
+        "url": "https://www.banxico.org.mx/tipcamb/llenarTasasInteresAction.do?idioma=sp",
+        "fecha": "2026-11-03",   # fecha de la subasta
+    },
+    "USD": {
+        "tasa": 0.0403,
+        "instrumento": "T-bill a 3 meses, mercado secundario (serie DTB3, tasa de descuento)",
+        "fuente": "FRED, Federal Reserve Bank of St. Louis",
+        "url": "https://fred.stlouisfed.org/series/DTB3",
+        "fecha": "2026-11-04",   # último dato diario publicado al consultar
+    },
+    "KRW": {
+        "tasa": 0.0300,
+        "instrumento": "Tasa base (Base Rate)",
+        "fuente": "Bank of Korea, decisión de política monetaria",
+        "url": "https://www.bok.or.kr/eng/bbs/E0000634/view.do?nttId=11065825&menuNo=400423",
+        "fecha": "2026-10-22",   # fecha de la decisión
+    },
+}
+FECHA_CONSULTA_TASAS = "2026-11-05"     # día en que se consultaron las tres fuentes
 
 # Estilo de las velas: "up" = alcista dorado / bajista rojo; "clasico" = verde / rojo.
 VELAS_ESTILO = "up"

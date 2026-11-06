@@ -8,9 +8,13 @@ Dashboard educativo en Streamlit para analizar acciones con periodicidad mensual
 
 *README en construcción: la versión completa se escribe en la Etapa 5 del plan de trabajo (ver `CLAUDE.md`).*
 
+## Calidad de datos: AMXB.MX (América Móvil)
+
+> ⚠️ En los datos de Yahoo Finance, de 2015 a agosto de 2023 la serie B de América Móvil (`AMXB.MX`) tiene muchos días **sin volumen** (nadie la operó) y en casi todos ellos **se repite el precio del día anterior**: 829 de 2,978 días en el respaldo al 2026-11-05, y en 824 de ellos el cierre es idéntico al del día previo. Hasta el 16 de marzo de 2023 la serie más operada era la L, que ese día se convirtió en serie B. Los precios repetidos hacen que la acción parezca más estable de lo que fue: **bajan artificialmente la volatilidad** (y tienden a bajar también la beta y la correlación con el IPC). Se conserva en el dashboard como ejemplo de por qué hay que revisar la calidad de los datos; la app muestra este aviso al seleccionarla.
+
 ## Instalación local
 
-Requiere Python 3.12 o superior.
+Requiere Python 3.12+.
 
 ```bash
 python -m venv .venv
