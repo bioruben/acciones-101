@@ -324,7 +324,8 @@ acciones-101/
 ├── tests/
 │   └── test_metricas.py      # Pruebas de las fórmulas con casos conocidos
 ├── docs/
-│   └── captura.png           # Captura para este README
+│   ├── captura.png           # Captura para este README
+│   └── capturas/             # Capturas de las vistas de la presentación (ver abajo)
 ├── .streamlit/
 │   └── config.toml           # Tema base (colores del modo claro) y color primario
 ├── pytest.ini                # Configuración de pytest
@@ -336,6 +337,21 @@ acciones-101/
 ```
 
 `metricas.py` y `datos.py` no importan Streamlit, y `app.py` no contiene fórmulas. Así cada fórmula se puede probar y reutilizar fuera del dashboard.
+
+### Capturas de la presentación
+
+Están en [`docs/capturas/`](docs/capturas/), tomadas a 1600 px de ancho el 2026-11-06 con datos de Yahoo Finance, salvo la del respaldo. Todas usan de 2015 a hoy, periodicidad Mensual y SMA 10.
+
+| Slide | Archivo | Vista |
+|---|---|---|
+| Velas y SMA | `01_velas_nvda_claro.png` | «Velas» · NVDA · modo claro |
+| Rendimiento acumulado | `02_rendimiento_nvda_mu_aapl.png` | «Rendimiento» · NVDA, MU y AAPL · escala logarítmica |
+| Riesgo vs rendimiento | `03_riesgo_todas_kpis.png` | KPIs + «Riesgo» con todas las acciones y benchmarks |
+| Drawdown | `04_drawdown_nvda.png`, `04b_drawdown_skhynix.png` | «Drawdown» · NVDA y 000660.KS |
+| Contra el mercado | `05_vs_mercado_nvda_walmex.png` | «vs Mercado» · NVDA vs ^GSPC y WALMEX.MX vs ^MXX |
+| Backtest | `06_backtest_mxx.png`, `06b_backtest_aapl.png` | «Backtest» · ^MXX y AAPL |
+| Modo claro / oscuro | `01_velas_nvda_claro.png`, `07_velas_nvda_oscuro.png` | Vista general con KPIs y «Velas» en ambos modos |
+| Respaldo CSV | `08_aviso_respaldo.png` | Aviso visible con `FORZAR_RESPALDO=1` |
 
 ## Limitaciones
 
