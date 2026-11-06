@@ -36,6 +36,11 @@ def _limpiar(serie: pd.Series) -> pd.Series:
     return serie.dropna().sort_index()
 
 
+def _periodos(n: int) -> str:
+    """``"1 periodo"`` o ``"n periodos"`` para los mensajes de advertencia."""
+    return f"{n} periodo" if n == 1 else f"{n} periodos"
+
+
 def _alinear(a: pd.Series, b: pd.Series) -> pd.DataFrame:
     """Une dos series por fecha y conserva solo las fechas presentes en ambas."""
     return pd.concat([a.rename("a"), b.rename("b")], axis=1, join="inner").dropna()
@@ -409,6 +414,45 @@ def correlacion(rend_activo: pd.Series, rend_benchmark: pd.Series) -> float:
     return float(datos["a"].corr(datos["b"]))
 
 
+def recta_regresion(rend_activo: pd.Series, rend_benchmark: pd.Series) -> dict[str, float | list[float]]:
+    """Recta de regresión (mínimos cuadrados) de los rendimientos del activo contra el benchmark.
+
+    Fórmulas:
+        r_a = α + β × r_m
+        β = Cov(r_a, r_m) / Var(r_m)
+        α = media(r_a) − β × media(r_m)
+
+    Interpretación:
+        La pendiente β es la beta del activo. El intercepto α es el
+        rendimiento promedio por periodo que no explica el mercado (cuando el
+        mercado rinde 0 %). Sirve para dibujar la recta sobre la gráfica de
+        dispersión.
+
+    Args:
+        rend_activo: Rendimientos del activo.
+        rend_benchmark: Rendimientos del benchmark (se alinean por fecha).
+
+    Returns:
+        Dict con ``alfa``, ``beta`` y dos puntos para graficar la recta:
+        ``x`` (mínimo y máximo de r_m) y ``y`` (valores ajustados en esos
+        puntos). Si no hay datos suficientes, ``alfa`` y ``beta`` son ``NaN`` y
+        las listas vienen vacías.
+
+    Example:
+        >>> m = pd.Series([0.01, -0.02, 0.03])
+        >>> r = recta_regresion(0.001 + 2 * m, m)
+        >>> round(r["alfa"], 6), round(r["beta"], 6)
+        (0.001, 2.0)
+    """
+    datos = _alinear(rend_activo, rend_benchmark)
+    b = beta(datos["a"], datos["b"])
+    if math.isnan(b):
+        return {"alfa": math.nan, "beta": math.nan, "x": [], "y": []}
+    a = float(datos["a"].mean() - b * datos["b"].mean())
+    x = [float(datos["b"].min()), float(datos["b"].max())]
+    return {"alfa": a, "beta": b, "x": x, "y": [a + b * xi for xi in x]}
+
+
 def sharpe(rend: pd.Series, tasa_libre_anual: float, periodos_por_anio: int) -> float:
     """Sharpe ratio anualizado: rendimiento extra por unidad de riesgo.
 
@@ -565,8 +609,8 @@ def backtest_sma(
     n = len(precios)
     if n <= ventana:
         advertencias.append(
-            f"No se puede correr el backtest: hay {n} periodos completos y la SMA de "
-            f"{ventana} periodos necesita al menos {ventana + 1} (la ventana más un "
+            f"No se puede correr el backtest: hay {_periodos(n)} completos y la SMA de "
+            f"{_periodos(ventana)} necesita al menos {ventana + 1} (la ventana más un "
             "periodo para decidir). Reduce la ventana o amplía el rango de fechas."
         )
         vacia = pd.Series(dtype=float)
@@ -605,7 +649,7 @@ def backtest_sma(
     anios = len(rend_bh) / periodos_por_anio
     if anios < MINIMO_ANIOS:
         advertencias.append(
-            f"El backtest cubre solo {len(rend_bh)} periodos ({anios:.1f} años) después de "
+            f"El backtest cubre solo {_periodos(len(rend_bh))} ({anios:.1f} años) después de "
             f"formar la SMA. Se necesitan al menos {MINIMO_ANIOS:.0f} años para reportar "
             "CAGR y Sharpe ratio; se muestran como NaN."
         )
@@ -678,9 +722,13 @@ def resumen_metricas(
         "advertencias": advertencias,
     }
 
+    if n == 0:
+        # Con un solo precio no hay ninguna caída que medir: el drawdown "0 %" sería engañoso.
+        resultado["max_drawdown"] = math.nan
+
     if anios < MINIMO_ANIOS:
         advertencias.append(
-            f"Solo hay {n} periodos completos ({anios:.1f} años). Se necesitan al menos "
+            f"Solo hay {_periodos(n)} con rendimiento ({anios:.1f} años). Se necesitan al menos "
             f"{MINIMO_ANIOS:.0f} años para reportar CAGR, volatilidad, Sharpe ratio y beta; "
             "se muestran como NaN."
         )

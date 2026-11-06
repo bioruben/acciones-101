@@ -185,6 +185,15 @@ def test_beta_alinea_fechas() -> None:
     assert metricas.beta(a, m) == pytest.approx(2.0)
 
 
+def test_recta_regresion_recupera_alfa_y_beta() -> None:
+    m = mensual([0.01, -0.02, 0.03, 0.00, 0.02, -0.01])
+    recta = metricas.recta_regresion(0.001 + 2 * m, m)
+    assert recta["alfa"] == pytest.approx(0.001)
+    assert recta["beta"] == pytest.approx(2.0)
+    assert recta["x"] == pytest.approx([-0.02, 0.03])
+    assert recta["y"] == pytest.approx([0.001 + 2 * -0.02, 0.001 + 2 * 0.03])
+
+
 def test_backtest_fuera_del_mercado_rinde_tasa_libre() -> None:
     precios = mensual(list(np.linspace(200, 100, 40)))  # siempre bajando: nunca invertido
     res = metricas.backtest_sma(precios, 5, tasa_libre_anual=0.12, periodos_por_anio=12)
@@ -209,6 +218,12 @@ def test_resumen_metricas_con_menos_de_dos_anios() -> None:
     assert math.isnan(resumen["sharpe"])
     assert resumen["advertencias"]
     assert not math.isnan(resumen["max_drawdown"])  # el drawdown sí se reporta
+
+
+def test_resumen_metricas_con_un_solo_periodo_no_inventa_drawdown() -> None:
+    resumen = metricas.resumen_metricas(mensual([100.0]), 12, 0.065)
+    assert math.isnan(resumen["max_drawdown"])
+    assert resumen["advertencias"]
 
 
 def test_resumen_metricas_completo() -> None:

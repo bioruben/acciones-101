@@ -56,6 +56,8 @@ BENCHMARKS: dict[str, dict[str, str]] = {
 # ---------------------------------------------------------------------------
 FECHA_INICIO = "2015-01-01"             # Primer día que se descarga (formato AAAA-MM-DD)
 TICKER_DEFAULT = "NVDA"                 # Acción que aparece seleccionada al abrir la app
+TICKERS_COMPARAR_DEFAULT = ["NVDA", "MU", "AAPL"]  # Selección inicial de «Rendimiento» y «Riesgo»
+VS_MERCADO_SEGUNDO_DEFAULT = "WALMEX.MX"           # Acción de la derecha en «vs Mercado»
 PERIODICIDAD_DEFAULT = "Mensual"        # "Mensual" o "Anual"
 
 # Reglas de pandas para pasar de datos diarios a la periodicidad elegida.
@@ -63,8 +65,10 @@ PERIODICIDAD_DEFAULT = "Mensual"        # "Mensual" o "Anual"
 # periodos_por_anio se usa para anualizar métricas (12 en mensual, 1 en anual).
 # "unidad" y "adjetivo" solo se usan en los textos de la app.
 PERIODICIDADES: dict[str, dict[str, str | int]] = {
-    "Mensual": {"regla": "ME", "periodos_por_anio": 12, "unidad": "meses", "adjetivo": "mensuales"},
-    "Anual":   {"regla": "YE", "periodos_por_anio": 1,  "unidad": "años",  "adjetivo": "anuales"},
+    "Mensual": {"regla": "ME", "periodos_por_anio": 12, "unidad": "meses", "unidad_singular": "mes",
+                "adjetivo": "mensuales"},
+    "Anual":   {"regla": "YE", "periodos_por_anio": 1,  "unidad": "años",  "unidad_singular": "año",
+                "adjetivo": "anuales"},
 }
 
 # ---------------------------------------------------------------------------
@@ -143,6 +147,14 @@ PALETA: dict[str, dict[str, str]] = {
         "benchmark": "#6F8FD6",
         "rejilla": "#2E2E2E",
     },
+}
+
+# Color por mercado en la gráfica de «Riesgo». El rojo está reservado para caídas
+# y el azul para benchmarks, así que se usan dorado, carbón y gris. Se validó que
+# se distinguen con daltonismo; además cada punto lleva su etiqueta de texto.
+COLORES_MERCADO: dict[str, dict[str, str]] = {
+    "claro":  {"México": "#A88B4F", "EE.UU.": "#1F1F1F", "Corea": "#BFBFBF"},
+    "oscuro": {"México": "#D9BE8A", "EE.UU.": "#F2F2F2", "Corea": "#8A8A8A"},
 }
 
 # Verde del estilo "clasico" de velas (solo se usa si VELAS_ESTILO = "clasico").
