@@ -10,6 +10,7 @@ Este archivo solo arma la interfaz y las gráficas. Las fórmulas viven en
 Cómo está organizado:
 
 1. Textos fijos y utilidades de formato.
+1b. Modo claro / oscuro: template de Plotly, CSS inyectado y tablas HTML.
 2. Carga y preparación de datos (con caché) y el ``Contexto`` compartido.
 3. Funciones que dibujan cada gráfica (``figura_*``).
 4. Barra lateral, encabezado con KPIs y una función por pestaña (``pestana_*``).
@@ -17,12 +18,15 @@ Cómo está organizado:
 
 from __future__ import annotations
 
+import html
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import date
 
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
 from plotly.subplots import make_subplots
 from streamlit.delta_generator import DeltaGenerator
@@ -58,12 +62,18 @@ NOTA_MONEDA_LOCAL = (
     "tipo de cambio. Cada acción se compara solo contra el benchmark de su mercado."
 )
 MOTIVO_POCOS_DATOS = f"se necesitan al menos {metricas.MINIMO_ANIOS:.0f} años de datos"
+TICKER_EJEMPLO = "NVDA"  # acción del ejemplo de "pocas observaciones" en los expanders
 
-MODO = "claro"  # En la Etapa 4 se agrega el botón claro/oscuro.
 PLOTLY_CONFIG = {"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]}
 TIPOS_LINEA = ["solid", "dash", "dot", "dashdot", "longdash", "longdashdot"]
 
 st.set_page_config(page_title="Acciones 101", layout="wide")
+
+# Modo actual ("claro" u "oscuro"). Vive en st.session_state para que sobreviva a
+# cada interacción; el botón de la barra lateral lo cambia (ver ``cambiar_modo``).
+if "modo" not in st.session_state:
+    st.session_state.modo = config.MODO_DEFAULT
+MODO: str = st.session_state.modo
 
 
 def info_ticker(ticker: str) -> dict[str, str]:
@@ -108,14 +118,21 @@ def es_nan(valor: object) -> bool:
     return valor is None or (isinstance(valor, float) and math.isnan(valor))
 
 
+def _sin_cero_negativo(texto: str) -> str:
+    """Quita el signo de ``"-0.00"`` o ``"-0.0%"``: un valor que redondea a cero no es negativo."""
+    if texto.startswith("-") and float(texto.rstrip("%")) == 0:
+        return texto[1:]
+    return texto
+
+
 def pct(valor: float, decimales: int = 1) -> str:
     """Formatea un decimal como porcentaje; ``n/d`` si falta."""
-    return "n/d" if es_nan(valor) else f"{valor:.{decimales}%}"
+    return "n/d" if es_nan(valor) else _sin_cero_negativo(f"{valor:.{decimales}%}")
 
 
 def num(valor: float, decimales: int = 2) -> str:
     """Formatea un número; ``n/d`` si falta."""
-    return "n/d" if es_nan(valor) else f"{valor:.{decimales}f}"
+    return "n/d" if es_nan(valor) else _sin_cero_negativo(f"{valor:.{decimales}f}")
 
 
 def periodos_texto(n: int, periodicidad: str) -> str:
@@ -129,6 +146,210 @@ def rgba(hex_color: str, alfa: float) -> str:
     h = hex_color.lstrip("#")
     r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
     return f"rgba({r}, {g}, {b}, {alfa})"
+
+
+def plural(n: int, singular: str, plural_: str) -> str:
+    """``"1 rendimiento"`` o ``"5 rendimientos"``."""
+    return f"{n} {singular if n == 1 else plural_}"
+
+
+def titulo_eje(texto: str, escala_log: bool) -> str:
+    """Agrega «escala logarítmica» al título del eje cuando aplica, para que nadie la lea como lineal."""
+    return f"{texto} · escala logarítmica" if escala_log else texto
+
+
+# ---------------------------------------------------------------------------
+# 1b. Modo claro / oscuro
+# ---------------------------------------------------------------------------
+def plantilla_plotly(modo: str) -> go.layout.Template:
+    """Template de Plotly con la paleta UP del modo elegido.
+
+    Parte de ``plotly_white`` (claro) o ``plotly_dark`` (oscuro) y reemplaza
+    fondo, rejilla, textos, leyenda y globos de ayuda con los colores de
+    ``config.PALETA``. Todas las gráficas lo usan (ver ``estilo_base``), así
+    que cambian juntas al cambiar de modo.
+
+    Args:
+        modo: ``"claro"`` u ``"oscuro"``.
+
+    Returns:
+        Template listo para ``fig.update_layout(template=...)``.
+    """
+    c = config.PALETA[modo]
+    plantilla = go.layout.Template(pio.templates["plotly_white" if modo == "claro" else "plotly_dark"])
+    ejes = dict(gridcolor=c["rejilla"], linecolor=c["rejilla"], zerolinecolor=c["rejilla"], zeroline=False,
+                automargin=True,  # deja espacio para las etiquetas de los ejes
+                tickfont=dict(color=c["texto_secundario"]), title=dict(font=dict(color=c["texto_secundario"])))
+    plantilla.layout.update(
+        paper_bgcolor=c["fondo"], plot_bgcolor=c["fondo"],
+        font=dict(color=c["texto"], size=13),
+        colorway=[c["primario"], c["benchmark"], c["texto_secundario"]],  # sin rojo: solo con significado
+        xaxis=ejes, yaxis=ejes,
+        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color=c["texto"])),
+        hoverlabel=dict(bgcolor=c["superficie"], bordercolor=c["rejilla"], font=dict(color=c["texto"])),
+        modebar=dict(bgcolor="rgba(0,0,0,0)", color=c["texto_secundario"], activecolor=c["texto_acento"]),
+    )
+    return plantilla
+
+
+PLANTILLAS: dict[str, go.layout.Template] = {modo: plantilla_plotly(modo) for modo in config.PALETA}
+
+
+def css_tema(c: dict[str, str]) -> str:
+    """CSS que pinta la interfaz de Streamlit con la paleta del modo elegido.
+
+    Streamlit no permite cambiar su tema desde Python en cada sesión, así que
+    el modo oscuro se logra inyectando CSS que sobrescribe fondos, superficies,
+    texto y controles. Los selectores usan los atributos ``data-testid`` de
+    Streamlit 1.67 (pueden cambiar en otras versiones). Los colores van en
+    variables CSS (``--a101-*``) para que cada regla sirva en ambos modos.
+
+    Args:
+        c: Paleta del modo (``config.PALETA["claro"]`` o ``["oscuro"]``).
+
+    Returns:
+        Bloque ``<style>`` para ``st.markdown(..., unsafe_allow_html=True)``.
+    """
+    variables = "\n".join(f"  --a101-{k.replace('_', '-')}: {v};" for k, v in c.items())
+    return f"""<style id="a101-tema">
+:root {{
+{variables}
+  --a101-sobre-dorado: #1A1A1A;  /* texto sobre fondo dorado: 7.78:1 */
+}}
+/* El contenedor de este bloque no ocupa espacio en la página. */
+[data-testid="stElementContainer"]:has(#a101-tema) {{ display: none; }}
+
+/* 1. Fondo, superficies y texto */
+body, .stApp, [data-testid="stHeader"] {{ background-color: var(--a101-fondo); color: var(--a101-texto); }}
+[data-testid="stSidebar"], [data-testid="stSidebarContent"] {{ background-color: var(--a101-superficie); }}
+.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6, .stApp p, .stApp li,
+.stApp label, .stApp summary, .stApp .katex {{ color: var(--a101-texto); }}
+/* Streamlit aclara los captions con opacidad 0.6; eso bajaba el gris secundario a menos de 4.5:1. */
+[data-testid="stCaptionContainer"] {{ opacity: 1; }}
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {{ color: var(--a101-texto-secundario); }}
+.stApp a {{ color: var(--a101-texto-acento); text-decoration: underline; text-decoration-color: var(--a101-primario); }}
+.stApp code {{ background-color: var(--a101-rejilla); color: var(--a101-texto); }}
+.stApp hr {{ border-color: var(--a101-rejilla); background-color: var(--a101-rejilla); }}
+[data-testid="stHeader"] button, [data-testid="stHeader"] span,
+[data-testid="stSidebarCollapseButton"] span {{ color: var(--a101-texto-secundario); }}
+/* Íconos de ayuda (?), flechas de las listas y botón del calendario */
+.stApp [data-testid="stTooltipIcon"] .stTooltipHoverTarget svg.icon {{ stroke: var(--a101-texto-secundario); }}
+[data-testid="stTooltipContent"] {{ background-color: var(--a101-superficie); border: 1px solid var(--a101-rejilla); }}
+[data-testid="stTooltipContent"] p {{ color: var(--a101-texto); }}
+[data-testid="stSelectbox"] button, [data-testid="stMultiSelect"] button,
+[data-testid="stDateInputCalendarButton"] {{ color: var(--a101-texto-secundario); }}
+[data-testid="stSelectbox"] svg, [data-testid="stMultiSelect"] svg {{ fill: currentColor; }}
+
+/* 2. Pestañas: la activa en negritas, con subrayado dorado y texto con acento */
+[data-testid="stTab"] p {{ color: var(--a101-texto-secundario); }}
+[data-testid="stTab"]:hover p {{ color: var(--a101-texto); }}
+[data-testid="stTab"][aria-selected="true"] p {{ color: var(--a101-texto-acento); font-weight: 600; }}
+[data-testid="stTabs"] [role="tablist"]::after {{ background-color: var(--a101-rejilla); }}
+
+/* 3. Controles */
+[data-testid="stSelectbox"] [role="group"], [data-testid="stMultiSelect"] [role="group"],
+[data-testid="stDateInputField"], [data-testid="stNumberInputContainer"],
+[data-testid="stNumberInputField"], [data-testid="stNumberInputStepDown"], [data-testid="stNumberInputStepUp"] {{
+  background-color: var(--a101-fondo); border-color: var(--a101-rejilla); color: var(--a101-texto); }}
+.stApp input, .stApp [role="spinbutton"], [data-testid="stDateInputField"] span {{ color: var(--a101-texto); }}
+.stApp [data-testid="stDateInputField"] span[data-type="literal"] {{ color: var(--a101-texto-secundario); }}
+[data-testid="stMultiSelect"] [data-tag], [data-testid="stMultiSelect"] [data-tag] * {{
+  background-color: var(--a101-primario); color: var(--a101-sobre-dorado); }}
+[data-testid="stSliderThumbValue"] p {{ color: var(--a101-texto); font-weight: 600; }}
+[data-testid="stSliderTickBar"] p {{ color: var(--a101-texto-secundario); }}
+/* Radio sin elegir: círculo vacío con borde gris (el de Streamlit se pierde en modo oscuro) */
+[data-testid="stRadioOption"]:not([data-selected="true"]) > div > div:first-child {{
+  background-color: var(--a101-fondo); border-color: var(--a101-texto-secundario); }}
+/* Interruptor apagado: carril gris visible en ambos modos */
+[data-testid="stCheckbox"] label:has(input[role="switch"]:not(:checked)) > div:nth-child(2) {{
+  background-color: color-mix(in srgb, var(--a101-texto-secundario) 60%, transparent); }}
+
+/* 3b. Menús emergentes (listas y calendario): se dibujan fuera de .stApp */
+div:has(> [role="listbox"]), [data-testid="stDateInputCalendar"] {{
+  background-color: var(--a101-superficie); color: var(--a101-texto); border: 1px solid var(--a101-rejilla); }}
+[role="listbox"] [role="option"] {{ color: var(--a101-texto); }}
+[role="listbox"] [role="option"][data-focused="true"], [role="listbox"] [role="option"][data-selected="true"] {{
+  background-color: var(--a101-rejilla); }}
+[data-testid="stDateInputCalendar"] th, [data-testid="stDateInputCalendar"] button,
+[data-testid="stDateInputCalendar"] [role="gridcell"] > div {{ color: var(--a101-texto); }}
+[data-testid="stDateInputCalendar"] [role="gridcell"] > div[data-disabled="true"],
+[data-testid="stDateInputCalendar"] button[data-disabled="true"] {{ color: var(--a101-texto-secundario); opacity: 0.6; }}
+[data-testid="stDateInputCalendar"] [role="gridcell"] > div[data-selection-start="true"],
+[data-testid="stDateInputCalendar"] [role="gridcell"] > div[data-selection-end="true"] {{ color: var(--a101-sobre-dorado); }}
+
+/* 4. Botones: el principal es dorado con texto oscuro (el blanco sobre dorado da 2.24:1) */
+[data-testid="stBaseButton-secondary"] {{ background-color: var(--a101-fondo); border-color: var(--a101-rejilla); }}
+[data-testid="stBaseButton-secondary"] p, [data-testid="stBaseButton-secondary"] span {{ color: var(--a101-texto); }}
+[data-testid="stBaseButton-secondary"]:hover {{ border-color: var(--a101-primario); }}
+[data-testid="stBaseButton-secondary"]:hover p, [data-testid="stBaseButton-secondary"]:hover span {{ color: var(--a101-texto-acento); }}
+[data-testid="stBaseButton-primary"] {{ background-color: var(--a101-primario); border-color: var(--a101-primario); }}
+[data-testid="stBaseButton-primary"]:hover {{ background-color: var(--a101-dorado-fuerte); border-color: var(--a101-dorado-fuerte); }}
+[data-testid="stBaseButton-primary"] p, [data-testid="stBaseButton-primary"] span {{ color: var(--a101-sobre-dorado); }}
+
+/* 5. Tarjetas (KPIs), expanders y avisos */
+[data-testid="stMetric"] {{ background-color: var(--a101-superficie); border-color: var(--a101-rejilla); }}
+[data-testid="stMetricLabel"] p {{ color: var(--a101-texto-secundario); }}
+[data-testid="stMetricDelta"], [data-testid="stMetricDelta"] * {{ color: var(--a101-texto-secundario); background-color: transparent; }}
+[data-testid="stExpander"] details {{ border-color: var(--a101-rejilla); background-color: transparent; }}
+[data-testid="stExpander"] summary:hover p, [data-testid="stExpander"] summary:hover span {{ color: var(--a101-texto-acento); }}
+[data-testid="stAlertContainer"] {{ background-color: var(--a101-superficie); border-left: 4px solid var(--a101-texto-secundario); }}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) {{ border-left-color: var(--a101-primario); }}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) {{ border-left-color: var(--a101-negativo); }}
+[data-testid="stAlertContainer"] p, [data-testid="stAlertContainer"] li {{ color: var(--a101-texto); }}
+[data-testid="stElementToolbar"] {{ background-color: var(--a101-superficie); color: var(--a101-texto-secundario); }}
+
+/* 6. Tablas HTML (ver tabla_html): reglas horizontales finas, números alineados a la derecha */
+.a101-tabla {{ overflow: auto; border: 1px solid var(--a101-rejilla); border-radius: 0.5rem; }}
+.a101-tabla table {{ border-collapse: collapse; width: 100%; font-size: 0.9rem; color: var(--a101-texto);
+  font-variant-numeric: tabular-nums; }}
+.a101-tabla th {{ position: sticky; top: 0; background-color: var(--a101-superficie); color: var(--a101-texto-secundario);
+  font-weight: 600; text-align: left; padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--a101-rejilla); white-space: nowrap; }}
+.a101-tabla td {{ padding: 0.35rem 0.75rem; border-bottom: 1px solid var(--a101-rejilla); white-space: nowrap; }}
+.a101-tabla tr:last-child td {{ border-bottom: none; }}
+.a101-tabla tbody tr:hover td {{ background-color: var(--a101-superficie); }}
+.a101-tabla .num {{ text-align: right; }}
+</style>"""
+
+
+def cambiar_modo() -> None:
+    """Callback del botón: alterna entre modo claro y oscuro."""
+    st.session_state.modo = "oscuro" if st.session_state.modo == "claro" else "claro"
+
+
+# Texto que parece número: "68.0%", "-0.04", "1,234", "USD 4.03%".
+_PATRON_NUMERO = re.compile(r"^([A-Z]{3} )?[-−+]?[\d,]*\.?\d+%?$")
+
+
+def tabla_html(tabla: pd.DataFrame, alto_max: int | None = None) -> str:
+    """Convierte una tabla de textos ya formateados en HTML que respeta el modo claro/oscuro.
+
+    Se usa en lugar de ``st.dataframe`` porque la tabla interactiva de
+    Streamlit se dibuja en un ``<canvas>`` al que el CSS del modo oscuro no
+    llega. Las columnas cuyo contenido es numérico (o ``n/d``) se alinean a la
+    derecha para comparar cifras de un vistazo.
+
+    Args:
+        tabla: DataFrame cuyas celdas ya son texto (``"68.0%"``, ``"1.31"``…).
+        alto_max: Alto máximo en píxeles; si la tabla es más alta, se desplaza.
+
+    Returns:
+        HTML para ``st.html``.
+    """
+    numericas = {
+        col for col in tabla.columns
+        if tabla[col].astype(str).map(lambda v: v == "n/d" or bool(_PATRON_NUMERO.match(v))).all()
+    }
+    def celda(etiqueta_html: str, col: str, contenido: object) -> str:
+        clase = ' class="num"' if col in numericas else ""
+        return f"<{etiqueta_html}{clase}>{html.escape(str(contenido))}</{etiqueta_html}>"
+
+    encabezado = "".join(celda("th", col, col) for col in tabla.columns)
+    filas = "".join(
+        "<tr>" + "".join(celda("td", col, v) for col, v in fila.items()) + "</tr>"
+        for _, fila in tabla.iterrows()
+    )
+    estilo = f' style="max-height: {alto_max}px"' if alto_max else ""
+    return f'<div class="a101-tabla"{estilo}><table><thead><tr>{encabezado}</tr></thead><tbody>{filas}</tbody></table></div>'
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +396,71 @@ def construir_tidy(hoy: str, inicio: date, fin: date, periodicidad: str, ventana
         {t: v["benchmark"] for t, v in config.TICKERS.items()},
         ventana,
         config.CAPITAL_INICIAL,
+    )
+
+
+@st.cache_data(ttl=config.TTL_CACHE_SEGUNDOS, show_spinner=False)
+def ejemplo_pocas_observaciones(hoy: str, ticker: str) -> dict[str, dict]:
+    """Volatilidad y beta de un ticker con todo el periodo, en Mensual y en Anual.
+
+    Alimenta el ejemplo de "pocas observaciones" de los expanders: la misma
+    acción y los mismos precios, pero con 12 veces menos rendimientos. Las
+    cifras se calculan aquí (no están escritas a mano), así que se actualizan
+    con los datos.
+
+    Args:
+        hoy: Fecha de hoy en texto (llave de la caché).
+        ticker: Acción del ejemplo (``TICKER_EJEMPLO``).
+
+    Returns:
+        ``{"Mensual": {...}, "Anual": {...}}``; cada uno con ``n``,
+        ``volatilidad``, ``beta``, ``mejor_fecha`` y ``mejor_rend`` (el
+        rendimiento más alto del periodo y su fecha).
+    """
+    inicio, fin = date.fromisoformat(config.FECHA_INICIO), date.fromisoformat(hoy)
+    salida: dict[str, dict] = {}
+    for periodicidad, p in config.PERIODICIDADES.items():
+        _, velas = preparar_velas(hoy, inicio, fin, periodicidad)
+        completas = datos.velas_completas(velas)
+        cierres = datos.serie(completas, ticker)
+        r = metricas.resumen_metricas(cierres, int(p["periodos_por_anio"]),
+                                      float(config.TASAS_LIBRE_RIESGO[moneda_de(ticker)]["tasa"]),
+                                      datos.serie(completas, benchmark_de(ticker)))
+        rend = metricas.rendimientos(cierres)
+        salida[periodicidad] = {"n": r["n_periodos"], "volatilidad": r["volatilidad"], "beta": r["beta"],
+                                "mejor_fecha": rend.idxmax() if not rend.empty else None,
+                                "mejor_rend": float(rend.max()) if not rend.empty else math.nan}
+    return salida
+
+
+def texto_pocas_observaciones(hoy: date, metrica: str) -> str:
+    """Párrafo del expander que explica por qué pocas observaciones dan estimaciones inestables.
+
+    Args:
+        hoy: Fecha de hoy.
+        metrica: ``"volatilidad"`` o ``"beta"``.
+
+    Returns:
+        Texto en Markdown con el ejemplo de ``TICKER_EJEMPLO`` (vacío si ese
+        ticker ya no está en ``config.TICKERS``).
+    """
+    if TICKER_EJEMPLO not in config.TICKERS:
+        return ""
+    ej = ejemplo_pocas_observaciones(hoy.isoformat(), TICKER_EJEMPLO)
+    m, a = ej["Mensual"], ej["Anual"]
+    if metrica == "beta":
+        cifras = (f"la beta de {TICKER_EJEMPLO} contra {benchmark_de(TICKER_EJEMPLO)} sale **{num(m['beta'])}** "
+                  f"con {m['n']} rendimientos mensuales y **{num(a['beta'])}** con solo {a['n']} anuales")
+    else:
+        cifras = (f"la volatilidad anualizada de {TICKER_EJEMPLO} sale **{pct(m['volatilidad'])}** con "
+                  f"{m['n']} rendimientos mensuales y **{pct(a['volatilidad'])}** con solo {a['n']} anuales")
+    extremo = (f" Un solo año extremo ({a['mejor_fecha']:%Y}: {a['mejor_rend']:+.0%}) pesa muchísimo en el cálculo."
+               if a["mejor_fecha"] is not None else "")
+    return (
+        f"**Cuidado con pocas observaciones.** Cada métrica es una *estimación* hecha con N rendimientos. "
+        f"Con los mismos precios, de {config.FECHA_INICIO[:4]} a hoy, {cifras}.{extremo} Por eso, con menos "
+        f"de {config.MINIMO_OBSERVACIONES} rendimientos, los KPIs avisan «pocas observaciones: estimación "
+        "inestable»."
     )
 
 
@@ -269,25 +555,19 @@ def colores_velas(colores: dict[str, str]) -> dict[str, str]:
             "baja_relleno": colores["negativo"], "baja_borde": colores["negativo"]}
 
 
-def estilo_base(fig: go.Figure, colores: dict[str, str], alto: int = 520) -> go.Figure:
-    """Aplica la paleta del dashboard y un estilo sobrio (sin chartjunk) a una figura."""
+def estilo_base(fig: go.Figure, alto: int = 520) -> go.Figure:
+    """Aplica el template del modo actual y un estilo sobrio (sin chartjunk) a una figura.
+
+    Los colores vienen del template (``PLANTILLAS``); aquí solo se fijan el
+    alto, los márgenes, la leyenda horizontal arriba y el modo de hover.
+    """
     fig.update_layout(
+        template=PLANTILLAS[MODO],
         height=alto,
-        paper_bgcolor=colores["fondo"],
-        plot_bgcolor=colores["fondo"],
-        font=dict(color=colores["texto"], size=13),
         margin=dict(l=80, r=20, t=40, b=50),  # espacio para las etiquetas de los ejes
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
-                    bgcolor="rgba(0,0,0,0)"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
         hovermode="x unified",
-        hoverlabel=dict(bgcolor=colores["superficie"], font_color=colores["texto"],
-                        bordercolor=colores["rejilla"]),
     )
-    ejes = dict(gridcolor=colores["rejilla"], linecolor=colores["rejilla"], zeroline=False, automargin=True,
-                tickfont=dict(color=colores["texto_secundario"]),
-                title_font=dict(color=colores["texto_secundario"]))
-    fig.update_xaxes(**ejes)
-    fig.update_yaxes(**ejes)
     return fig
 
 
@@ -339,10 +619,10 @@ def figura_velas(
         line=dict(color=colores["texto"], width=2),
         hovertemplate="%{y:,.2f}<extra>SMA " + str(ventana) + "</extra>",
     ))
-    estilo_base(fig, colores)
+    estilo_base(fig)
     fig.update_layout(xaxis_rangeslider_visible=False)
     fig.update_xaxes(hoverformat=formato_fecha)
-    fig.update_yaxes(title_text=f"Precio ajustado ({moneda})", tickformat=",",
+    fig.update_yaxes(title_text=titulo_eje(f"Precio ajustado ({moneda})", escala_log), tickformat=",",
                      type="log" if escala_log else "linear")
     return fig
 
@@ -387,7 +667,7 @@ def figura_crecimiento(
             x=s.index, y=s.values, mode="lines", name=t, line=estilo_linea(t, principal, colores),
             hovertemplate=f"{t}: %{{y:,.0f}} {moneda_de(t)}<extra></extra>",
         ))
-    estilo_base(fig, colores, alto)
+    estilo_base(fig, alto)
 
     # Rango del eje fijo para poder colocar las etiquetas finales sin choques.
     transformar = math.log10 if escala_log else (lambda v: v)
@@ -395,7 +675,7 @@ def figura_crecimiento(
     bajo, alto_y = transformar(float(todos.min())), transformar(float(todos.max()))
     holgura = (alto_y - bajo) * 0.06 or 1.0
     fig.update_yaxes(range=[bajo - holgura, alto_y + holgura], type="log" if escala_log else "linear",
-                     title_text=titulo_y, tickformat=",")
+                     title_text=titulo_eje(titulo_y, escala_log), tickformat=",")
     # Rango X fijo a los datos: si no, Plotly lo alarga para que quepan las etiquetas finales.
     fig.update_xaxes(range=[min(s.index[0] for s in curvas.values()), max(s.index[-1] for s in curvas.values())])
     finales = {t: float(s.iloc[-1]) for t, s in curvas.items()}
@@ -461,7 +741,7 @@ def figura_riesgo(tabla: pd.DataFrame, colores: dict[str, str]) -> go.Figure:
                                "Volatilidad: %{x:.1%}<br>Sharpe ratio: %{customdata[1]} "
                                "(tasa %{customdata[2]})<extra></extra>"),
             ))
-    estilo_base(fig, colores, alto=540)
+    estilo_base(fig, alto=540)
     fig.update_layout(hovermode="closest")
     fig.add_hline(y=0, line=dict(color=colores["texto_secundario"], width=1, dash="dot"))
     margen_x = (tabla["volatilidad"].max() - tabla["volatilidad"].min()) * 0.08
@@ -499,8 +779,8 @@ def figura_drawdown(precios: pd.Series, dd: pd.Series, info: dict, moneda: str,
                            arrowcolor=colores["texto_secundario"],
                            text=f"<b>Máx. drawdown {info['max_drawdown']:.1%}</b><br>valle: {valle:%Y-%m}",
                            font=dict(color=colores["texto"], size=12))
-    estilo_base(fig, colores, alto=640)
-    fig.update_yaxes(title_text=f"Precio ({moneda})", tickformat=",", row=1, col=1,
+    estilo_base(fig, alto=640)
+    fig.update_yaxes(title_text=titulo_eje(f"Precio ({moneda})", escala_log), tickformat=",", row=1, col=1,
                      type="log" if escala_log else "linear")
     fig.update_yaxes(title_text="Drawdown", tickformat=".0%", row=2, col=1)
     return fig
@@ -523,7 +803,7 @@ def figura_dispersion_beta(rend_a: pd.Series, rend_m: pd.Series, recta: dict, be
         fig.add_annotation(x=recta["x"][1], y=recta["y"][1], text=f"<b>β = {beta_valor:.2f}</b>",
                            showarrow=False, xanchor="right", yanchor="bottom", yshift=6,
                            bgcolor=colores["fondo"], font=dict(color=colores["texto"], size=13))
-    estilo_base(fig, colores, alto=360)
+    estilo_base(fig, alto=360)
     fig.update_layout(hovermode="closest", margin=dict(l=70, r=20, t=40, b=50))
     fig.update_xaxes(title_text=f"Rendimiento de {bench}", tickformat=".0%",
                      zeroline=True, zerolinecolor=colores["rejilla"])
@@ -566,10 +846,10 @@ def figura_backtest(res: metricas.ResultadoBacktest, moneda: str, colores: dict[
     # el primero, Plotly tomaría el eje X como numérico y no dibujaría las fechas.
     fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name="Fuera del mercado (rinde la tasa libre)",
                              marker=dict(symbol="square", size=12, color=colores["rejilla"]), hoverinfo="skip"))
-    estilo_base(fig, colores, alto=500)
+    estilo_base(fig, alto=500)
     fig.update_xaxes(type="date")
-    fig.update_yaxes(title_text=f"Valor de {config.CAPITAL_INICIAL:,} {moneda}", tickformat=",",
-                     type="log" if escala_log else "linear")
+    fig.update_yaxes(title_text=titulo_eje(f"Valor de {config.CAPITAL_INICIAL:,} {moneda}", escala_log),
+                     tickformat=",", type="log" if escala_log else "linear")
     return fig
 
 
@@ -682,8 +962,9 @@ def pestana_rendimiento(ctx: Contexto, ticker: str, seleccion: list[str]) -> Non
             "porcentual de las curvas, no los montos entre monedas distintas."
         )
     mostrar_avisos_datos(ctx, list(curvas), compacto=True)
-    escala_log = st.toggle("Escala logarítmica", key="log_rendimiento",
-                           help="Con escala logarítmica, pendientes iguales = rendimientos porcentuales iguales.")
+    # Abre en escala logarítmica: en lineal, una acción que se multiplicó cientos de veces aplasta a las demás.
+    escala_log = st.toggle("Escala logarítmica", value=True, key="log_rendimiento",
+                           help="Con escala logarítmica, pendientes iguales = misma tasa de crecimiento.")
     titulo_y = f"Valor de la inversión ({monedas[0]})" if len(monedas) == 1 else "Valor de la inversión (moneda local)"
     fig = figura_crecimiento(curvas, ticker if ticker in curvas else None, ctx.colores, escala_log, titulo_y)
     st.plotly_chart(fig, width="stretch", theme=None, config=PLOTLY_CONFIG)
@@ -695,6 +976,9 @@ def pestana_rendimiento(ctx: Contexto, ticker: str, seleccion: list[str]) -> Non
 Cada línea responde: *si hubiera invertido {config.CAPITAL_INICIAL:,} el mismo día en cada activo,
 ¿cuánto valdría después?* Los rendimientos se **multiplican** periodo a periodo (interés
 compuesto) y, como los precios están ajustados, incluyen dividendos reinvertidos.
+
+**¿Por qué escala logarítmica?** En log, pendientes iguales = misma tasa de crecimiento: dos
+líneas igual de inclinadas crecieron al mismo % por periodo, aunque una valga mucho más que la otra.
 """
         )
         st.latex(r"V_t = C \times \prod_{i=1}^{t}(1 + r_i) \qquad r_i = \frac{P_i}{P_{i-1}} - 1")
@@ -759,7 +1043,7 @@ def pestana_riesgo(ctx: Contexto, seleccion: list[str]) -> None:
         "Correlación": tabla["correlacion"].map(num),
         "Benchmark": tabla["benchmark"],
     })
-    st.dataframe(vista, hide_index=True, width="stretch", height=35 * (len(vista) + 1) + 3)  # sin scroll
+    st.html(tabla_html(vista))
     st.caption(f"n/d = no disponible ({MOTIVO_POCOS_DATOS}, o es un benchmark y no tiene beta contra sí mismo). "
                "Cada Sharpe ratio usa la tasa libre de riesgo de la moneda del activo.")
 
@@ -777,6 +1061,7 @@ de la tasa libre de riesgo por cada unidad de volatilidad.
         st.latex(r"\text{Sharpe} = \frac{\overline{r - r_f}}{\sigma(r)}\sqrt{k}"
                  r"\qquad k = \text{periodos por año}")
         st.markdown(f"**Simplificación:** {NOTA_TASA_CONSTANTE}")
+        st.markdown(texto_pocas_observaciones(ctx.hoy, "volatilidad"))
         st.markdown(
             "**Para reflexionar:** ¿algún activo tuvo más rendimiento con *menos* riesgo que su "
             "benchmark? ¿Qué tanto depende la respuesta del periodo elegido?"
@@ -916,6 +1201,7 @@ a la recta.
         st.latex(r"\beta = \frac{\operatorname{Cov}(r_a, r_m)}{\operatorname{Var}(r_m)}"
                  r"\qquad \rho = \frac{\operatorname{Cov}(r_a, r_m)}{\sigma_a\,\sigma_m}")
         st.markdown(f"**Simplificación del Sharpe ratio:** {NOTA_TASA_CONSTANTE}")
+        st.markdown(texto_pocas_observaciones(ctx.hoy, "beta"))
         st.markdown(
             "**Para reflexionar:** una acción con beta alta, ¿es necesariamente más arriesgada que "
             "una con beta baja? Compara su volatilidad en «Riesgo»."
@@ -945,13 +1231,13 @@ def pestana_backtest(ctx: Contexto, ticker: str) -> None:
         st.caption(f"Desde {res.curvas.index[0]:%Y-%m-%d} (cuando la SMA ya existe), con {config.CAPITAL_INICIAL:,} {moneda}.")
 
     tabla = res.resumen.rename(index={"regla_sma": "Regla SMA", "buy_and_hold": "Buy & hold"})
-    tabla.index.name = "Estrategia"
-    st.dataframe(pd.DataFrame({
+    st.html(tabla_html(pd.DataFrame({
+        "Estrategia": tabla.index,
         "CAGR": tabla["cagr"].map(pct),
         "Máx. drawdown": tabla["max_drawdown"].map(pct),
         "Sharpe ratio": tabla["sharpe"].map(num),
         "% del tiempo invertido": tabla["pct_invertido"].map(lambda v: pct(v, 0)),
-    }), width="stretch")
+    })))
     if tabla[["cagr", "sharpe"]].isna().any().any():
         st.caption(f"n/d = no disponible ({MOTIVO_POCOS_DATOS} después de formar la SMA).")
     st.info(NOTA_BACKTEST)
@@ -975,18 +1261,28 @@ existía. Las bandas sombreadas son los periodos fuera del mercado.
         )
 
 
-def pestana_datos(ctx: Contexto, hoy: date) -> None:
-    """«Datos»: tabla tidy para BI y descarga en CSV."""
-    tidy = construir_tidy(hoy.isoformat(), ctx.inicio, ctx.fin, ctx.periodicidad, ctx.ventana,
+def pestana_datos(ctx: Contexto, ticker: str) -> None:
+    """«Datos»: vista previa de la tabla tidy para BI y descarga en CSV."""
+    tidy = construir_tidy(ctx.hoy.isoformat(), ctx.inicio, ctx.fin, ctx.periodicidad, ctx.ventana,
                           tuple(sorted(ctx.tasas.items())))
     st.markdown(
         f"Tabla en formato **tidy** (largo): **{len(tidy):,} filas**, una por fecha, ticker y métrica, "
         f"con periodos {config.PERIODICIDADES[ctx.periodicidad]['adjetivo']} completos."
     )
-    st.dataframe(tidy, hide_index=True, width="stretch", height=380,
-                 column_config={"fecha": st.column_config.DateColumn("fecha", format="YYYY-MM-DD"),
-                                "valor": st.column_config.NumberColumn("valor", format="%.6f")})
-    nombre = f"acciones101_{ctx.periodicidad.lower()}_{ctx.inicio:%Y%m%d}_{ctx.fin:%Y%m%d}.csv"
+    # Vista previa: las filas más recientes de la acción principal, para ver varias métricas por fecha.
+    vista = (tidy[tidy["ticker"] == ticker]
+             .sort_values(["fecha", "metrica"], ascending=[False, True])
+             .head(60))
+    if vista.empty:
+        st.info(f"No hay filas de {ticker} en el rango elegido.")
+    else:
+        st.html(tabla_html(vista.assign(
+            fecha=vista["fecha"].dt.strftime("%Y-%m-%d"),
+            valor=vista["valor"].map(lambda v: "n/d" if es_nan(v) else f"{v:,.4f}"),
+        ), alto_max=380))
+        st.caption(f"Vista previa: las {len(vista)} filas más recientes de {ticker} (n/d = celda vacía en el CSV). "
+                   f"El CSV trae las {len(tidy):,} filas de todos los tickers.")
+    nombre =f"acciones101_{ctx.periodicidad.lower()}_{ctx.inicio:%Y%m%d}_{ctx.fin:%Y%m%d}.csv"
     st.download_button("Descargar CSV", data=tidy.to_csv(index=False, date_format="%Y-%m-%d").encode("utf-8"),
                        file_name=nombre, mime="text/csv", type="primary", icon=":material/download:")
     st.markdown(
@@ -1022,6 +1318,10 @@ tenga que graficar.
 # ---------------------------------------------------------------------------
 # 4b. Armado de la página
 # ---------------------------------------------------------------------------
+# Primero el CSS del modo, para que la página se pinte bien desde el inicio.
+colores = config.PALETA[MODO]
+st.markdown(css_tema(colores), unsafe_allow_html=True)
+
 hoy = date.today()
 try:
     precios, meta = cargar_precios(hoy.isoformat())
@@ -1029,11 +1329,14 @@ except RuntimeError as error:
     st.error(f"No fue posible cargar datos. {error}")
     st.stop()
 
-colores = config.PALETA[MODO]
 fecha_minima = date.fromisoformat(config.FECHA_INICIO)
 todos_los_tickers = list(config.TICKERS) + list(config.BENCHMARKS)
 
 with st.sidebar:
+    oscuro = MODO == "oscuro"
+    st.button("Modo claro" if oscuro else "Modo oscuro", key="boton_modo", on_click=cambiar_modo,
+              icon=":material/light_mode:" if oscuro else ":material/dark_mode:", width="stretch",
+              help="Cambia los colores de la página y de las gráficas.")
     st.header("Controles")
 
     mercados = list(dict.fromkeys(v["mercado"] for v in config.TICKERS.values()))
@@ -1133,11 +1436,19 @@ tarjeta(k4, "Sharpe ratio", resumen["sharpe"], num(resumen["sharpe"]), motivo_na
         f"({tasa_info['instrumento']}), constante: es una simplificación.")
 tarjeta(k5, f"Beta vs {bench_principal}", resumen["beta"], num(resumen["beta"]), motivo_nan(resumen, "beta"),
         f"Sensibilidad frente a {etiqueta(bench_principal)}.")
-st.caption(
-    f"KPIs de **{etiqueta(ticker)}** con {resumen['n_periodos']} rendimientos "
-    f"{config.PERIODICIDADES[periodicidad]['adjetivo']} completos ({resumen['anios']:.1f} años), "
-    f"en {moneda_de(ticker)}."
-)
+n_rend = resumen["n_periodos"]
+adjetivo = config.PERIODICIDADES[periodicidad]["adjetivo_singular" if n_rend == 1 else "adjetivo"]
+texto_n = (f"KPIs de **{etiqueta(ticker)}** basados en **{plural(n_rend, 'rendimiento', 'rendimientos')} "
+           f"{adjetivo}** completos ({resumen['anios']:.1f} años), en {moneda_de(ticker)}.")
+if resumen["n_benchmark"] and resumen["n_benchmark"] != n_rend:
+    texto_n += f" La beta usa {resumen['n_benchmark']} periodos en común con {bench_principal}."
+st.caption(texto_n)
+if 0 < n_rend < config.MINIMO_OBSERVACIONES:
+    st.warning(
+        f"**Pocas observaciones: estimación inestable.** Con solo {n_rend} datos, un periodo extremo "
+        "cambia mucho la volatilidad, el Sharpe ratio y la beta (ver «Riesgo» → ¿Qué estoy viendo?).",
+        icon="⚠️",
+    )
 
 tabs = st.tabs(["Velas", "Rendimiento", "Riesgo", "Drawdown", "vs Mercado", "Backtest", "Datos"])
 with tabs[0]:
@@ -1153,4 +1464,4 @@ with tabs[4]:
 with tabs[5]:
     pestana_backtest(ctx, ticker)
 with tabs[6]:
-    pestana_datos(ctx, hoy)
+    pestana_datos(ctx, ticker)

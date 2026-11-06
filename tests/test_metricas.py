@@ -233,6 +233,8 @@ def test_resumen_metricas_completo() -> None:
     activo = mensual(list(100 * np.cumprod(1 + np.r_[0, 1.5 * rend_m])))
     resumen = metricas.resumen_metricas(activo, 12, 0.04, benchmark)
     assert resumen["advertencias"] == []
+    assert resumen["n_periodos"] == 60
+    assert resumen["n_benchmark"] == 60  # rendimientos en común para estimar la beta
     assert resumen["beta"] == pytest.approx(1.5)
     assert resumen["correlacion"] == pytest.approx(1.0)
     assert resumen["cagr"] == pytest.approx(metricas.cagr(activo, 12))

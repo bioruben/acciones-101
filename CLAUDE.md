@@ -169,13 +169,15 @@ Validaciones: si hay menos de 2 años de datos, o en periodicidad anual hay meno
 ### Encabezado
 Título "Acciones 101", subtítulo "La bolsa no es un casino: es análisis", aviso educativo de una línea y una fila de **KPIs** del ticker principal: CAGR, Volatilidad, Máx. drawdown, Sharpe ratio, Beta vs su benchmark. Formato: porcentajes con 1 decimal; Sharpe y beta con 2.
 
+**Número de observaciones (decisión del autor, 2026-11-06):** debajo de los KPIs se indica "basados en N rendimientos". Si N < `MINIMO_OBSERVACIONES` (24, en `config.py`), aparece el aviso breve "pocas observaciones: estimación inestable". Los expanders de volatilidad («Riesgo») y de beta («vs Mercado») lo explican con el ejemplo de NVDA en modo Anual, con cifras calculadas por la app (no escritas a mano).
+
 ### Pestañas (nombres exactos)
 Cada pestaña incluye un `st.expander("¿Qué estoy viendo?")` con explicación breve, la fórmula (`st.latex`) y una pregunta para reflexionar. Donde se explique el Sharpe ratio, aclarar que usar una tasa libre de riesgo constante para todo el periodo es una simplificación.
 
 Si el ticker principal (o uno de los comparados) tiene aviso en `AVISOS_DATOS`, mostrarlo de forma visible.
 
 1. **«Velas»** — velas OHLC (Plotly `Candlestick`) de la periodicidad elegida + línea SMA. Sin rangeslider. Interruptor de escala logarítmica. El periodo en curso se muestra con estilo distinto y la etiqueta "periodo en curso"; la SMA usa solo periodos completos.
-2. **«Rendimiento»** — crecimiento de `CAPITAL_INICIAL` para los tickers seleccionados desde la misma fecha, con etiqueta del valor final de cada línea. Aviso si se mezclan monedas.
+2. **«Rendimiento»** — crecimiento de `CAPITAL_INICIAL` para los tickers seleccionados desde la misma fecha, con etiqueta del valor final de cada línea. Aviso si se mezclan monedas. Abre en **escala logarítmica** (con interruptor; decisión del autor, 2026-11-06): el eje dice "escala logarítmica" y el expander explica en una línea que en log, pendientes iguales = misma tasa de crecimiento.
 3. **«Riesgo»** — dispersión riesgo vs rendimiento (x = volatilidad anualizada, y = CAGR) de todos los tickers y benchmarks; color por mercado; benchmarks con otro marcador. Tabla con las métricas debajo.
 4. **«Drawdown»** — panel superior con precio y máximo previo (línea punteada), panel inferior con área de drawdown; anotación del máximo drawdown y su fecha; tiempo de recuperación en texto.
 5. **«vs Mercado»** — crecimiento del ticker vs su benchmark; dispersión de rendimientos (activo vs benchmark) con recta de regresión y beta anotada; tarjetas con beta, correlación, Sharpe del activo y del benchmark. Debe poder mostrar dos tickers lado a lado (por ejemplo WALMEX.MX y NVDA) usando dos columnas.
@@ -214,7 +216,9 @@ Paleta basada en la UP. **Dorado como color principal**, sobre blanco (claro) o 
 - Velas: alcista dorado, bajista rojo (`VELAS_ESTILO="up"`); opción `"clasico"` verde/rojo en config.
 - Implementa el botón de modo con `st.session_state` + CSS inyectado (`st.markdown(..., unsafe_allow_html=True)`) para fondo, superficies y texto, **y** un template de Plotly por modo (`plotly_white` / `plotly_dark` personalizados con la paleta). Las gráficas deben verse bien en ambos modos.
 - Verifica el **contraste** de texto en ambos modos (dorado sobre blanco solo para elementos grandes; para texto usa el dorado fuerte).
-- `.streamlit/config.toml`: `primaryColor = "#C9A96E"`, `base = "light"`.
+  - Medido en la Etapa 4: el dorado fuerte sobre blanco da 3.25:1, que solo alcanza para texto grande. Por eso, en modo claro el texto destacado (pestaña activa, ligas) usa el texto principal, y el dorado se queda en subrayados, líneas y fondos de botón con texto oscuro (7.78:1). En modo oscuro el texto destacado usa el dorado fuerte (10.74:1). Ver el token `texto_acento` en `config.PALETA`.
+- `.streamlit/config.toml`: `primaryColor = "#C9A96E"`, `base = "light"` (más los colores del modo claro, para que la app arranque con la paleta antes de cargar el CSS).
+- Las tablas se dibujan en HTML (`tabla_html` en `app.py`) y no con `st.dataframe`, porque esta se dibuja en un `<canvas>` al que el CSS del modo oscuro no llega.
 - Tipografía y espaciado limpios; nada de chartjunk (principios de Tufte).
 
 ## 11. Pruebas (`tests/test_metricas.py`)

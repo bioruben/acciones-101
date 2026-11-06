@@ -66,9 +66,9 @@ PERIODICIDAD_DEFAULT = "Mensual"        # "Mensual" o "Anual"
 # "unidad" y "adjetivo" solo se usan en los textos de la app.
 PERIODICIDADES: dict[str, dict[str, str | int]] = {
     "Mensual": {"regla": "ME", "periodos_por_anio": 12, "unidad": "meses", "unidad_singular": "mes",
-                "adjetivo": "mensuales"},
+                "adjetivo": "mensuales", "adjetivo_singular": "mensual"},
     "Anual":   {"regla": "YE", "periodos_por_anio": 1,  "unidad": "años",  "unidad_singular": "año",
-                "adjetivo": "anuales"},
+                "adjetivo": "anuales", "adjetivo_singular": "anual"},
 }
 
 # ---------------------------------------------------------------------------
@@ -78,6 +78,11 @@ VENTANA_SMA_DEFAULT = 10                # en periodos de la periodicidad elegida
 VENTANA_SMA_MIN = 3                     # límites del slider en la barra lateral
 VENTANA_SMA_MAX = 24
 CAPITAL_INICIAL = 10_000                # monto hipotético para las curvas de crecimiento
+
+# Con menos de este número de rendimientos, los KPIs muestran el aviso
+# "pocas observaciones: estimación inestable". 24 = dos años de datos mensuales.
+# En periodicidad Anual casi siempre aplica (de 2015 a hoy hay unos 10 rendimientos anuales).
+MINIMO_OBSERVACIONES = 24
 
 # Tasas libres de riesgo ANUALES, una por moneda. Cada acción usa la tasa de
 # su moneda para el Sharpe ratio y para el backtest (rendimiento fuera del mercado).
@@ -122,8 +127,15 @@ TTL_CACHE_SEGUNDOS = 6 * 3600           # la app vuelve a consultar Yahoo Financ
 # Paleta (basada en la Universidad Panamericana)
 # ---------------------------------------------------------------------------
 # Dorado = color principal. Rojo solo con significado (caídas, drawdown,
-# velas bajistas). Azul discreto para benchmarks. Para TEXTO sobre fondo claro
-# usa "dorado_fuerte" (el dorado primario no tiene contraste suficiente).
+# velas bajistas). Azul discreto para benchmarks.
+#
+# Contraste medido (WCAG; texto normal necesita 4.5:1, texto grande 3:1):
+#   - Modo claro: dorado primario sobre blanco = 2.24:1 y dorado fuerte = 3.25:1.
+#     Ninguno alcanza para texto chico, así que el dorado se usa en líneas,
+#     subrayados y fondos de botón (con texto oscuro encima: 7.78:1).
+#   - Modo oscuro: dorado primario sobre negro = 8.63:1 y dorado fuerte = 10.74:1.
+# "texto_acento" es el color del texto destacado (pestaña activa, ligas): texto
+# principal en claro y dorado fuerte en oscuro.
 PALETA: dict[str, dict[str, str]] = {
     "claro": {
         "fondo": "#FFFFFF",
@@ -135,6 +147,7 @@ PALETA: dict[str, dict[str, str]] = {
         "negativo": "#D0102B",
         "benchmark": "#002B72",
         "rejilla": "#E6E2D8",
+        "texto_acento": "#1A1A1A",
     },
     "oscuro": {
         "fondo": "#0E0E0E",
@@ -146,8 +159,10 @@ PALETA: dict[str, dict[str, str]] = {
         "negativo": "#E5394F",
         "benchmark": "#6F8FD6",
         "rejilla": "#2E2E2E",
+        "texto_acento": "#D9BE8A",
     },
 }
+MODO_DEFAULT = "claro"                  # modo con el que abre la app: "claro" u "oscuro"
 
 # Color por mercado en la gráfica de «Riesgo». El rojo está reservado para caídas
 # y el azul para benchmarks, así que se usan dorado, carbón y gris. Se validó que

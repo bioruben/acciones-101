@@ -685,8 +685,10 @@ def resumen_metricas(
             beta y correlación).
 
     Returns:
-        Dict con las llaves ``fecha_inicio``, ``fecha_fin``, ``n_periodos``,
-        ``anios``, ``rendimiento_total``, ``cagr``, ``volatilidad``,
+        Dict con las llaves ``fecha_inicio``, ``fecha_fin``, ``n_periodos``
+        (número de rendimientos), ``n_benchmark`` (rendimientos en común con el
+        benchmark, con los que se estiman beta y correlación; 0 si no hay
+        benchmark), ``anios``, ``rendimiento_total``, ``cagr``, ``volatilidad``,
         ``sharpe``, ``beta``, ``correlacion``, ``max_drawdown``,
         ``fecha_pico``, ``fecha_valle``, ``fecha_recuperacion``,
         ``tiempo_recuperacion`` y ``advertencias`` (lista de textos).
@@ -706,6 +708,8 @@ def resumen_metricas(
         "fecha_inicio": precios.index[0] if not precios.empty else None,
         "fecha_fin": precios.index[-1] if not precios.empty else None,
         "n_periodos": n,
+        "n_benchmark": (len(_alinear(rend, rendimientos(precios_benchmark)))
+                        if precios_benchmark is not None else 0),
         "anios": anios,
         "rendimiento_total": (float(precios.iloc[-1] / precios.iloc[0] - 1)
                               if len(precios) >= 2 else math.nan),
@@ -740,7 +744,7 @@ def resumen_metricas(
 
     if precios_benchmark is not None:
         rend_b = rendimientos(precios_benchmark)
-        comunes = len(_alinear(rend, rend_b))
+        comunes = resultado["n_benchmark"]
         if comunes / periodos_por_anio < MINIMO_ANIOS:
             advertencias.append(
                 f"Solo hay {comunes} periodos en común con el benchmark; beta y "

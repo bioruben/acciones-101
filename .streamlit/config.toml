@@ -1,5 +1,13 @@
-# Tema base de Streamlit. El botón de modo claro/oscuro de la app ajusta
-# el resto de los colores con CSS (ver app.py).
+# Tema base de Streamlit: los colores del modo claro de la paleta UP (config.py).
+# El botón de modo claro/oscuro de la barra lateral ajusta el resto con CSS
+# inyectado y con un template de Plotly por modo (ver app.py).
 [theme]
 base = "light"
-primaryColor = "#C9A96E"
+primaryColor = "#C9A96E"            # dorado UP
+backgroundColor = "#FFFFFF"         # fondo
+secondaryBackgroundColor = "#F7F5F0" # superficie (barra lateral, controles)
+textColor = "#1A1A1A"               # texto principal
+borderColor = "#E6E2D8"             # rejilla / bordes
+linkColor = "#1A1A1A"               # el dorado no alcanza contraste para texto chico sobre blanco
+codeTextColor = "#1A1A1A"
+codeBackgroundColor = "#E6E2D8"
