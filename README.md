@@ -2,7 +2,7 @@
 
 Dashboard educativo en Streamlit para analizar acciones de México, EE.UU. y Corea con periodicidad mensual o anual: la bolsa no es un casino, es análisis.
 
-**App publicada:** _pendiente: pega aquí la liga de Streamlit Community Cloud._
+**App publicada:** _[acciones-101](https://acciones-101.streamlit.app/)_
 
 ![Vista general del dashboard en modo claro: KPIs de NVDA y pestaña «Velas»](docs/captura.png)
 
