@@ -1464,7 +1464,7 @@ def pestana_datos(ctx: Contexto, ticker: str) -> None:
         ), alto_max=380))
         st.caption(f"Vista previa: las {len(vista)} filas más recientes de {ticker} (n/d = celda vacía en el CSV). "
                    f"El CSV trae las {len(tidy):,} filas de todos los tickers.")
-    nombre =f"acciones101_{ctx.periodicidad.lower()}_{ctx.inicio:%Y%m%d}_{ctx.fin:%Y%m%d}.csv"
+    nombre = f"acciones101_{ctx.periodicidad.lower()}_{ctx.inicio:%Y%m%d}_{ctx.fin:%Y%m%d}.csv"
     st.download_button("Descargar CSV", data=tidy.to_csv(index=False, date_format="%Y-%m-%d").encode("utf-8"),
                        file_name=nombre, mime="text/csv", type="primary", icon=":material/download:")
     st.markdown(
@@ -1477,6 +1477,8 @@ def pestana_datos(ctx: Contexto, ticker: str) -> None:
 
 Usa `metrica` como filtro o dimensión y `valor` como medida. Las métricas de resumen
 (`cagr`, `sharpe`, `beta`…) aparecen una vez por ticker, en la última fecha del periodo.
+El backtest de la pestaña «Backtest» viene en `valor_buy_hold`, `valor_regla_sma` y
+`senal_sma` (1 = invertida, 0 = fuera).
 """
     )
 

@@ -275,3 +275,30 @@ def test_tabla_tidy_para_bi() -> None:
             "cagr", "sharpe", "beta"} <= metricas_accion
     cagr_bi = tidy.query("ticker == 'ACCION' and metrica == 'cagr'")["valor"].iloc[0]
     assert cagr_bi == pytest.approx(1.01 ** 12 - 1)
+
+
+def test_tabla_tidy_incluye_backtest() -> None:
+    """El CSV trae las curvas y la señal del backtest, iguales a las de ``backtest_sma``."""
+    fechas = pd.date_range("2020-01-31", periods=30, freq="ME")
+    cierres = 100 * np.cumprod(1 + np.tile([0.05, -0.04, 0.03, -0.06, 0.02], 6))
+    velas = pd.concat([
+        pd.DataFrame({"fecha": fechas, "ticker": "ACCION", "close": cierres}),
+        pd.DataFrame({"fecha": fechas, "ticker": "INDICE", "close": 100 * 1.01 ** np.arange(30)}),
+    ])
+    tidy = metricas.tabla_tidy_para_bi(velas, 12, {"ACCION": 0.04}, {"ACCION": "INDICE"},
+                                       ventana_sma=3, capital=10_000)
+    bt = metricas.backtest_sma(pd.Series(cierres, index=fechas), 3, 0.04, 12, 10_000)
+
+    def serie(metrica: str) -> pd.Series:
+        filas = tidy.query("ticker == 'ACCION' and metrica == @metrica")
+        return pd.Series(filas["valor"].to_numpy(), index=pd.DatetimeIndex(filas["fecha"]))
+
+    np.testing.assert_allclose(serie("valor_buy_hold"), bt.curvas["buy_and_hold"])
+    np.testing.assert_allclose(serie("valor_regla_sma"), bt.curvas["regla_sma"])
+    assert serie("valor_regla_sma").iloc[0] == 10_000  # arranca con el capital inicial
+    senal = serie("senal_sma")
+    assert set(senal.unique()) == {0.0, 1.0}  # la regla estuvo dentro y fuera
+    assert (senal.index == bt.senal.index).all()
+    assert (senal.to_numpy() == bt.senal.astype(float).to_numpy()).all()
+    # INDICE no tiene tasa libre de riesgo: sin ella no hay backtest.
+    assert not tidy.query("ticker == 'INDICE' and metrica == 'senal_sma'").shape[0]

@@ -775,6 +775,16 @@ def tabla_tidy_para_bi(
         ``valor_inversion``, ``drawdown`` y ``sma_<ventana>`` (si se da
         ``ventana_sma``).
 
+    Backtest (si se da ``ventana_sma`` y el ticker tiene tasa libre de riesgo;
+    son los mismos números de ``backtest_sma`` y de la pestaña «Backtest»):
+        ``valor_buy_hold`` y ``valor_regla_sma``: valor de ``capital`` con cada
+        estrategia. Ambas curvas arrancan en el periodo en que la SMA ya
+        existe, así que ``valor_buy_hold`` empieza después que
+        ``valor_inversion`` (que arranca en la primera fecha).
+        ``senal_sma``: 1 si en ese periodo la regla estuvo invertida (el
+        cierre del periodo **anterior** superó su SMA) y 0 si estuvo fuera,
+        rindiendo la tasa libre de riesgo.
+
     Métricas resumen (una fila por ticker, con la última fecha del periodo):
         ``cagr``, ``volatilidad_anualizada``, ``max_drawdown``, ``sharpe``,
         ``beta`` y ``correlacion`` (las dos últimas solo si el benchmark está
@@ -786,8 +796,9 @@ def tabla_tidy_para_bi(
         tasas_por_ticker: Tasa libre de riesgo anual de cada ticker. Sin ella,
             el Sharpe ratio queda en ``NaN``.
         benchmark_por_ticker: Benchmark de cada ticker (``{"NVDA": "^GSPC"}``).
-        ventana_sma: Ventana de la SMA a incluir, o ``None`` para omitirla.
-        capital: Capital inicial para ``valor_inversion``.
+        ventana_sma: Ventana de la SMA y del backtest, o ``None`` para
+            omitir ambos.
+        capital: Capital inicial para ``valor_inversion`` y el backtest.
 
     Returns:
         DataFrame con columnas ``fecha, ticker, metrica, valor``.
@@ -814,12 +825,19 @@ def tabla_tidy_para_bi(
         agregar(rendimiento_acumulado(rend), ticker, "rendimiento_acumulado")
         agregar(crecimiento_capital(rend, capital, precios.index[0]), ticker, "valor_inversion")
         agregar(serie_drawdown(precios), ticker, "drawdown")
+        tasa = tasas_por_ticker.get(ticker, math.nan)
         if ventana_sma:
             agregar(sma(precios, ventana_sma).dropna(), ticker, f"sma_{ventana_sma}")
+            if not math.isnan(tasa):
+                # Fuera del mercado la regla rinde la tasa libre: sin tasa no hay backtest.
+                bt = backtest_sma(precios, ventana_sma, tasa, periodos_por_anio, capital)
+                agregar(bt.curvas["buy_and_hold"], ticker, "valor_buy_hold")
+                agregar(bt.curvas["regla_sma"], ticker, "valor_regla_sma")
+                agregar(bt.senal.astype(float), ticker, "senal_sma")
 
         benchmark = benchmark_por_ticker.get(ticker)
         resumen = resumen_metricas(
-            precios, periodos_por_anio, tasas_por_ticker.get(ticker, math.nan),
+            precios, periodos_por_anio, tasa,
             cierres.get(benchmark) if benchmark and benchmark != ticker else None,
         )
         resumen_series = pd.Series({
