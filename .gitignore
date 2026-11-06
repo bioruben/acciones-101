@@ -1,0 +1,18 @@
+# Entorno virtual y cachés de Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secretos de Streamlit (nunca se suben)
+.streamlit/secrets.toml
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Archivos temporales del script de respaldo
+data/*.tmp
+
+# Bitácora local del agente (no se publica)
+BITACORA_AGENTE.md

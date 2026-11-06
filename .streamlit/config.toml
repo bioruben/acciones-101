@@ -1,0 +1,5 @@
+# Tema base de Streamlit. El botón de modo claro/oscuro de la app ajusta
+# el resto de los colores con CSS (ver app.py).
+[theme]
+base = "light"
+primaryColor = "#C9A96E"
