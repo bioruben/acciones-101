@@ -299,6 +299,15 @@ En las tres, usa `metrica` como filtro o dimensión, `valor` como medida, y `tic
 
 Cada `git push` a `main` vuelve a desplegar la app. Si en la nube aparece el aviso del respaldo, la app sigue funcionando con los datos del CSV; actualízalo antes de clase (ver [Respaldo CSV](#respaldo-csv)). La app no necesita *secrets* ni claves de API.
 
+**Qué revisar en la app publicada:**
+
+- [ ] **Datos:** en la barra lateral, *Fuente de datos* dice "Yahoo Finance (`yfinance`)" con la fecha de hoy, **o** arriba aparece el aviso "⚠️ Yahoo Finance no respondió. Mostrando datos de respaldo al ‹fecha›." Las dos situaciones son válidas; un error en rojo no lo es.
+- [ ] **KPIs:** la fila de 5 tarjetas muestra valores (no "n/d") con el rango completo en Mensual.
+- [ ] **Modos:** el botón *Modo oscuro* / *Modo claro* cambia fondo, tarjetas, tablas y gráficas, y el texto se lee en los dos.
+- [ ] **Las 7 pestañas** (Velas, Rendimiento, Riesgo, Drawdown, vs Mercado, Backtest y Datos) muestran su gráfica o tabla y su «¿Qué estoy viendo?».
+- [ ] **Datos:** el botón *Descargar CSV* baja el archivo.
+- [ ] En *Manage app* (abajo a la derecha), los logs no muestran errores.
+
 ## Estructura del repositorio
 
 ```

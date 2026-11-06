@@ -26,22 +26,26 @@ def mensual(valores: list[float], inicio: str = "2020-01-31") -> pd.Series:
 # Casos mínimos pedidos en CLAUDE.md
 # ---------------------------------------------------------------------------
 def test_cagr_serie_que_se_duplica_en_un_anio_es_100_por_ciento() -> None:
+    """Una serie mensual que pasa de 100 a 200 en 12 meses tiene CAGR = 100 %."""
     # 13 cierres mensuales = 12 periodos = exactamente 1 año, de 100 a 200.
     precios = mensual(list(100 * 2 ** (np.arange(13) / 12)))
     assert metricas.cagr(precios, periodos_por_anio=12) == pytest.approx(1.0)
 
 
 def test_cagr_anual_duplica_en_un_anio() -> None:
+    """En periodicidad anual, duplicarse en un periodo (1 año) da CAGR = 100 %."""
     assert metricas.cagr(pd.Series([100.0, 200.0]), periodos_por_anio=1) == pytest.approx(1.0)
 
 
 def test_volatilidad_de_rendimiento_constante_es_cero() -> None:
+    """Si el rendimiento es el mismo cada mes, no hay variación: volatilidad = 0."""
     precios = mensual(list(100 * 1.01 ** np.arange(36)))  # +1 % cada mes, sin variación
     rend = metricas.rendimientos(precios)
     assert metricas.volatilidad_anualizada(rend, 12) == pytest.approx(0.0, abs=1e-12)
 
 
 def test_drawdown_100_120_60_90() -> None:
+    """Precios [100, 120, 60, 90]: máx. drawdown = −50 % (de 120 a 60) y todavía no se recupera."""
     precios = mensual([100, 120, 60, 90])
     info = metricas.max_drawdown(precios)
     assert info["max_drawdown"] == pytest.approx(-0.5)
@@ -53,6 +57,7 @@ def test_drawdown_100_120_60_90() -> None:
 
 
 def test_beta_2x_es_2_y_correlacion_1() -> None:
+    """Si el activo rinde exactamente 2 veces el benchmark, beta = 2 y correlación = 1."""
     rng = np.random.default_rng(42)
     rend_benchmark = mensual(list(rng.normal(0.01, 0.04, 60)))
     rend_activo = 2 * rend_benchmark
@@ -61,6 +66,7 @@ def test_beta_2x_es_2_y_correlacion_1() -> None:
 
 
 def test_sharpe_con_rendimiento_igual_a_tasa_libre_es_cero() -> None:
+    """Si el rendimiento promedio es igual a la tasa libre de riesgo, el Sharpe ratio es ≈ 0."""
     tasa_anual = 0.065
     r_f = metricas.tasa_por_periodo(tasa_anual, 12)
     # Rendimiento promedio = r_f exactamente, con variación para que σ > 0.
@@ -69,6 +75,7 @@ def test_sharpe_con_rendimiento_igual_a_tasa_libre_es_cero() -> None:
 
 
 def test_sma_1_2_3_4_ventana_2() -> None:
+    """SMA de [1, 2, 3, 4] con ventana 2 = [NaN, 1.5, 2.5, 3.5]."""
     resultado = metricas.sma(pd.Series([1.0, 2.0, 3.0, 4.0]), 2)
     assert math.isnan(resultado.iloc[0])
     assert resultado.iloc[1:].tolist() == pytest.approx([1.5, 2.5, 3.5])
@@ -97,6 +104,7 @@ def test_backtest_sin_leakage_no_captura_el_salto() -> None:
 
 
 def test_resamplear_ohlc_mensual() -> None:
+    """Diario a mensual: open = primer valor del mes, close = último, high y low = extremos, volume = suma."""
     fechas = pd.bdate_range("2024-01-01", "2024-02-29")
     n = len(fechas)
     diario = pd.DataFrame({
@@ -127,6 +135,7 @@ def test_resamplear_ohlc_mensual() -> None:
 # Pruebas adicionales
 # ---------------------------------------------------------------------------
 def test_resamplear_es_por_ticker() -> None:
+    """El resampling se hace por ticker: los precios de dos tickers no se mezclan."""
     fechas = pd.bdate_range("2024-01-01", "2024-01-31")
     partes = [pd.DataFrame({"fecha": fechas, "ticker": t, "open": base, "high": base + 1,
                             "low": base - 1, "close": base, "volume": 1})
@@ -136,6 +145,7 @@ def test_resamplear_es_por_ticker() -> None:
 
 
 def test_periodo_en_curso_se_marca_incompleto() -> None:
+    """El último mes o año se marca ``completo = False`` si sus datos no llegan a su último día hábil."""
     def diario_hasta(fin: str) -> pd.DataFrame:
         fechas = pd.bdate_range("2024-01-01", fin)
         return pd.DataFrame({"fecha": fechas, "ticker": "X", "open": 1.0, "high": 1.0,
@@ -154,6 +164,7 @@ def test_periodo_en_curso_se_marca_incompleto() -> None:
 
 
 def test_rendimientos_simple_y_log() -> None:
+    """Rendimiento simple = P_t / P_{t−1} − 1 y logarítmico = ln(P_t / P_{t−1}); otro tipo da error."""
     precios = pd.Series([100.0, 110.0, 99.0])
     assert metricas.rendimientos(precios).tolist() == pytest.approx([0.10, -0.10])
     assert metricas.rendimientos(precios, "log").tolist() == pytest.approx(
@@ -163,10 +174,12 @@ def test_rendimientos_simple_y_log() -> None:
 
 
 def test_rendimiento_acumulado_multiplica_no_suma() -> None:
+    """+50 % y luego −50 % deja −25 %, no 0 %: los rendimientos se multiplican."""
     assert metricas.rendimiento_acumulado(pd.Series([0.5, -0.5])).tolist() == pytest.approx([0.5, -0.25])
 
 
 def test_crecimiento_capital_arranca_en_el_capital() -> None:
+    """La curva de 10,000 empieza en 10,000 en la fecha inicial y crece con cada rendimiento."""
     precios = mensual([100, 110, 121])
     curva = metricas.crecimiento_capital(metricas.rendimientos(precios), 10_000, precios.index[0])
     assert curva.tolist() == pytest.approx([10_000, 11_000, 12_100])
@@ -174,18 +187,21 @@ def test_crecimiento_capital_arranca_en_el_capital() -> None:
 
 
 def test_tiempo_recuperacion_cuando_si_se_recupera() -> None:
+    """Precios [100, 120, 60, 90, 130]: del valle (60) a superar el pico (120) pasan 2 periodos."""
     precios = mensual([100, 120, 60, 90, 130])
     assert metricas.tiempo_recuperacion(precios) == 2
     assert metricas.max_drawdown(precios)["fecha_recuperacion"] == precios.index[4]
 
 
 def test_beta_alinea_fechas() -> None:
+    """La beta solo usa las fechas que tienen las dos series."""
     m = mensual([0.01, -0.02, 0.03, 0.00, 0.02])
     a = 2 * m.iloc[1:]  # el activo no tiene la primera fecha
     assert metricas.beta(a, m) == pytest.approx(2.0)
 
 
 def test_recta_regresion_recupera_alfa_y_beta() -> None:
+    """Si r_a = 0.001 + 2·r_m, la recta de regresión da alfa = 0.001 y beta = 2."""
     m = mensual([0.01, -0.02, 0.03, 0.00, 0.02, -0.01])
     recta = metricas.recta_regresion(0.001 + 2 * m, m)
     assert recta["alfa"] == pytest.approx(0.001)
@@ -195,6 +211,7 @@ def test_recta_regresion_recupera_alfa_y_beta() -> None:
 
 
 def test_backtest_fuera_del_mercado_rinde_tasa_libre() -> None:
+    """Si la regla nunca está invertida, rinde exactamente la tasa libre de riesgo."""
     precios = mensual(list(np.linspace(200, 100, 40)))  # siempre bajando: nunca invertido
     res = metricas.backtest_sma(precios, 5, tasa_libre_anual=0.12, periodos_por_anio=12)
     r_f = metricas.tasa_por_periodo(0.12, 12)
@@ -205,6 +222,7 @@ def test_backtest_fuera_del_mercado_rinde_tasa_libre() -> None:
 
 
 def test_backtest_con_pocos_periodos_regresa_advertencia() -> None:
+    """Con menos periodos que la ventana de la SMA, el backtest regresa NaN y una advertencia."""
     anual = pd.Series([100.0, 110, 120, 130], index=pd.date_range("2020", periods=4, freq="YE"))
     res = metricas.backtest_sma(anual, ventana=10, tasa_libre_anual=0.05, periodos_por_anio=1)
     assert res.advertencias
@@ -212,6 +230,7 @@ def test_backtest_con_pocos_periodos_regresa_advertencia() -> None:
 
 
 def test_resumen_metricas_con_menos_de_dos_anios() -> None:
+    """Con menos de 2 años, CAGR y Sharpe ratio son NaN con advertencia, pero el drawdown sí se reporta."""
     precios = mensual(list(100 + np.arange(13)))  # 12 rendimientos = 1 año
     resumen = metricas.resumen_metricas(precios, 12, 0.065)
     assert math.isnan(resumen["cagr"])
@@ -221,12 +240,14 @@ def test_resumen_metricas_con_menos_de_dos_anios() -> None:
 
 
 def test_resumen_metricas_con_un_solo_periodo_no_inventa_drawdown() -> None:
+    """Con un solo precio no hay caída que medir: el drawdown es NaN, no 0 %."""
     resumen = metricas.resumen_metricas(mensual([100.0]), 12, 0.065)
     assert math.isnan(resumen["max_drawdown"])
     assert resumen["advertencias"]
 
 
 def test_resumen_metricas_completo() -> None:
+    """Con 5 años de datos y un activo que rinde 1.5 veces el benchmark, el resumen sale completo y sin advertencias."""
     rng = np.random.default_rng(7)
     rend_m = rng.normal(0.008, 0.04, 60)
     benchmark = mensual(list(100 * np.cumprod(1 + np.r_[0, rend_m])))
@@ -241,6 +262,7 @@ def test_resumen_metricas_completo() -> None:
 
 
 def test_tabla_tidy_para_bi() -> None:
+    """La tabla para BI tiene formato largo (fecha, ticker, metrica, valor) y su CAGR coincide con la fórmula."""
     fechas = pd.date_range("2020-01-31", periods=30, freq="ME")
     velas = pd.concat([
         pd.DataFrame({"fecha": fechas, "ticker": t, "close": base * 1.01 ** np.arange(30)})

@@ -149,7 +149,16 @@ def rgba(hex_color: str, alfa: float) -> str:
 
 
 def plural(n: int, singular: str, plural_: str) -> str:
-    """``"1 rendimiento"`` o ``"5 rendimientos"``."""
+    """Escribe una cantidad con el sustantivo en singular o plural.
+
+    Args:
+        n: Cantidad.
+        singular: Palabra para ``n == 1`` (``"rendimiento"``).
+        plural_: Palabra para cualquier otro número (``"rendimientos"``).
+
+    Returns:
+        Texto como ``"1 rendimiento"`` o ``"5 rendimientos"``.
+    """
     return f"{n} {singular if n == 1 else plural_}"
 
 
@@ -373,6 +382,12 @@ def cargar_precios(hoy: str) -> tuple[pd.DataFrame, dict]:
 def preparar_velas(hoy: str, inicio: date, fin: date, periodicidad: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Filtra el rango de fechas y pasa todos los tickers a la periodicidad elegida.
 
+    Args:
+        hoy: Fecha de hoy en texto (llave de la caché).
+        inicio: Primer día del rango elegido en la barra lateral.
+        fin: Último día del rango.
+        periodicidad: ``"Mensual"`` o ``"Anual"``.
+
     Returns:
         Tupla ``(diario, velas)``: precios diarios del rango y velas
         (incluido el periodo incompleto, marcado en la columna ``completo``).
@@ -385,7 +400,20 @@ def preparar_velas(hoy: str, inicio: date, fin: date, periodicidad: str) -> tupl
 @st.cache_data(ttl=config.TTL_CACHE_SEGUNDOS, show_spinner=False)
 def construir_tidy(hoy: str, inicio: date, fin: date, periodicidad: str, ventana: int,
                    tasas: tuple[tuple[str, float], ...]) -> pd.DataFrame:
-    """Tabla larga para BI de todos los tickers (ver ``metricas.tabla_tidy_para_bi``)."""
+    """Tabla larga para BI de todos los tickers (ver ``metricas.tabla_tidy_para_bi``).
+
+    Args:
+        hoy: Fecha de hoy en texto (llave de la caché).
+        inicio: Primer día del rango.
+        fin: Último día del rango.
+        periodicidad: ``"Mensual"`` o ``"Anual"``.
+        ventana: Ventana de la SMA en periodos.
+        tasas: Pares ``(moneda, tasa anual)`` ordenados, para que la llave de
+            la caché sea siempre la misma.
+
+    Returns:
+        DataFrame con columnas ``fecha, ticker, metrica, valor``.
+    """
     _, velas = preparar_velas(hoy, inicio, fin, periodicidad)
     tasas_moneda = dict(tasas)
     todos = list(config.TICKERS) + list(config.BENCHMARKS)
@@ -520,7 +548,15 @@ def mostrar_avisos_datos(ctx: Contexto, tickers: list[str], extra: str = "", com
     """Muestra el aviso de calidad de datos (``config.AVISOS_DATOS``) de los tickers que lo tengan.
 
     La versión completa va en el encabezado; en las pestañas se usa la compacta,
-    que también dice qué pasa y cuál es el efecto.
+    que también dice qué pasa y cuál es el efecto. Si en el rango elegido el
+    ticker no tiene días sin volumen, el aviso no aparece.
+
+    Args:
+        ctx: Contexto con los precios diarios del rango.
+        tickers: Tickers a revisar.
+        extra: Texto que se agrega al final del aviso (por ejemplo, qué
+            significa en la gráfica de la pestaña).
+        compacto: ``True`` para la versión corta de las pestañas.
     """
     for t in tickers:
         if t not in config.AVISOS_DATOS:
@@ -586,6 +622,20 @@ def figura_velas(
 
     Las velas completas van en un trazo y el periodo incompleto en otro,
     translúcido y con una etiqueta de texto, para que no se confundan.
+
+    Args:
+        velas: Velas de periodos completos de un ticker.
+        en_curso: Vela del periodo incompleto (puede venir vacía).
+        linea_sma: SMA calculada solo con periodos completos.
+        ventana: Ventana de la SMA, para la leyenda.
+        moneda: Moneda del ticker, para el eje.
+        periodicidad: ``"Mensual"`` o ``"Anual"`` (formato de fecha del hover).
+        escala_log: ``True`` para el eje vertical en escala logarítmica.
+        colores: Paleta del modo actual.
+        etiqueta_en_curso: Texto junto a la vela incompleta.
+
+    Returns:
+        Figura de Plotly.
     """
     c = colores_velas(colores)
     formato_fecha = "%Y-%m" if periodicidad == "Mensual" else "%Y"
@@ -632,6 +682,14 @@ def estilo_linea(ticker: str, principal: str | None, colores: dict[str, str]) ->
 
     El tipo de trazo de cada acción depende de su posición en config.py, así
     que no cambia cuando cambias la selección.
+
+    Args:
+        ticker: Ticker de la línea.
+        principal: Acción que va en dorado, o ``None``.
+        colores: Paleta del modo actual.
+
+    Returns:
+        Dict para el argumento ``line`` de ``go.Scatter``.
     """
     if ticker == principal:
         return dict(color=colores["primario"], width=3, dash="solid")
@@ -660,7 +718,19 @@ def figura_crecimiento(
     titulo_y: str,
     alto: int = 500,
 ) -> go.Figure:
-    """Curvas de valor de una inversión, con el valor final escrito al final de cada línea."""
+    """Curvas de valor de una inversión, con el valor final escrito al final de cada línea.
+
+    Args:
+        curvas: Valor de la inversión por fecha, un elemento por ticker.
+        principal: Ticker que se resalta en dorado, o ``None``.
+        colores: Paleta del modo actual.
+        escala_log: ``True`` para el eje vertical en escala logarítmica.
+        titulo_y: Título del eje vertical.
+        alto: Alto de la figura en píxeles.
+
+    Returns:
+        Figura de Plotly.
+    """
     fig = go.Figure()
     for t, s in curvas.items():
         fig.add_trace(go.Scatter(
@@ -720,7 +790,16 @@ def _posiciones_texto(xs: list[float], ys: list[float]) -> list[str]:
 
 
 def figura_riesgo(tabla: pd.DataFrame, colores: dict[str, str]) -> go.Figure:
-    """Dispersión riesgo (volatilidad) vs rendimiento (CAGR), color por mercado."""
+    """Dispersión riesgo (volatilidad) vs rendimiento (CAGR), color por mercado.
+
+    Args:
+        tabla: Una fila por ticker con ``ticker``, ``nombre``, ``mercado``,
+            ``es_benchmark``, ``volatilidad``, ``cagr``, ``sharpe_txt`` y ``tasa_txt``.
+        colores: Paleta del modo actual.
+
+    Returns:
+        Figura de Plotly; los benchmarks van con rombo y cada punto lleva su etiqueta.
+    """
     colores_mercado = config.COLORES_MERCADO[MODO]
     tabla = tabla.assign(posicion=_posiciones_texto(tabla["volatilidad"].tolist(), tabla["cagr"].tolist()))
     fig = go.Figure()
@@ -756,7 +835,19 @@ def figura_riesgo(tabla: pd.DataFrame, colores: dict[str, str]) -> go.Figure:
 
 def figura_drawdown(precios: pd.Series, dd: pd.Series, info: dict, moneda: str,
                     colores: dict[str, str], escala_log: bool) -> go.Figure:
-    """Dos paneles: precio con su máximo previo (arriba) y área de drawdown (abajo)."""
+    """Dos paneles: precio con su máximo previo (arriba) y área de drawdown (abajo).
+
+    Args:
+        precios: Cierres por periodo (solo periodos completos).
+        dd: Serie de drawdown (``metricas.serie_drawdown``).
+        info: Resultado de ``metricas.max_drawdown`` (valor y fechas).
+        moneda: Moneda del ticker, para el eje.
+        colores: Paleta del modo actual.
+        escala_log: ``True`` para el panel de precio en escala logarítmica.
+
+    Returns:
+        Figura de Plotly con el máximo drawdown anotado.
+    """
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.07, row_heights=[0.55, 0.45])
     fig.add_trace(go.Scatter(x=precios.index, y=precios.values, mode="lines", name="Precio ajustado",
                              line=dict(color=colores["dorado_fuerte"], width=2),
@@ -774,12 +865,17 @@ def figura_drawdown(precios: pd.Series, dd: pd.Series, info: dict, moneda: str,
                                  name="Pico y valle", marker=dict(size=10, color=[colores["primario"], colores["negativo"]],
                                                                   line=dict(color=colores["texto"], width=1)),
                                  hoverinfo="skip"), row=1, col=1)
+        # Si el valle está en el tercio derecho, la etiqueta va a su izquierda para no salirse.
+        a_la_izquierda = (valle - precios.index[0]) > (precios.index[-1] - precios.index[0]) * 0.65
         fig.add_annotation(x=valle, y=info["max_drawdown"], row=2, col=1, showarrow=True, arrowhead=0,
-                           ax=50, ay=12, xanchor="left", bgcolor=colores["fondo"],
+                           ax=-50 if a_la_izquierda else 50, ay=12,
+                           xanchor="right" if a_la_izquierda else "left", bgcolor=colores["fondo"],
                            arrowcolor=colores["texto_secundario"],
                            text=f"<b>Máx. drawdown {info['max_drawdown']:.1%}</b><br>valle: {valle:%Y-%m}",
                            font=dict(color=colores["texto"], size=12))
     estilo_base(fig, alto=640)
+    # Rango X fijo a los datos: si no, Plotly lo alarga para que quepa la anotación.
+    fig.update_xaxes(range=[precios.index[0], precios.index[-1]])
     fig.update_yaxes(title_text=titulo_eje(f"Precio ({moneda})", escala_log), tickformat=",", row=1, col=1,
                      type="log" if escala_log else "linear")
     fig.update_yaxes(title_text="Drawdown", tickformat=".0%", row=2, col=1)
@@ -788,7 +884,20 @@ def figura_drawdown(precios: pd.Series, dd: pd.Series, info: dict, moneda: str,
 
 def figura_dispersion_beta(rend_a: pd.Series, rend_m: pd.Series, recta: dict, beta_valor: float,
                            ticker: str, bench: str, colores: dict[str, str]) -> go.Figure:
-    """Dispersión de rendimientos del activo vs su benchmark, con la recta de regresión."""
+    """Dispersión de rendimientos del activo vs su benchmark, con la recta de regresión.
+
+    Args:
+        rend_a: Rendimientos del activo.
+        rend_m: Rendimientos del benchmark.
+        recta: Resultado de ``metricas.recta_regresion``.
+        beta_valor: Beta que se anota junto a la recta (``NaN`` si no hay).
+        ticker: Ticker del activo, para el eje vertical.
+        bench: Ticker del benchmark, para el eje horizontal.
+        colores: Paleta del modo actual.
+
+    Returns:
+        Figura de Plotly con un punto por periodo.
+    """
     juntos = pd.concat([rend_a.rename("a"), rend_m.rename("m")], axis=1, join="inner").dropna()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -832,7 +941,17 @@ def tramos_fuera(res: metricas.ResultadoBacktest) -> list[tuple[pd.Timestamp, pd
 
 def figura_backtest(res: metricas.ResultadoBacktest, moneda: str, colores: dict[str, str],
                     escala_log: bool) -> go.Figure:
-    """Curvas de buy & hold y regla SMA, con los periodos fuera del mercado sombreados."""
+    """Curvas de buy & hold y regla SMA, con los periodos fuera del mercado sombreados.
+
+    Args:
+        res: Resultado de ``metricas.backtest_sma``.
+        moneda: Moneda del activo, para el eje.
+        colores: Paleta del modo actual.
+        escala_log: ``True`` para el eje vertical en escala logarítmica.
+
+    Returns:
+        Figura de Plotly.
+    """
     fig = go.Figure()
     for inicio, fin in tramos_fuera(res):
         fig.add_vrect(x0=inicio, x1=fin, fillcolor=colores["rejilla"], opacity=0.7, line_width=0, layer="below")
@@ -857,7 +976,12 @@ def figura_backtest(res: metricas.ResultadoBacktest, moneda: str, colores: dict[
 # 4a. Pestañas
 # ---------------------------------------------------------------------------
 def pestana_velas(ctx: Contexto, ticker: str) -> None:
-    """«Velas»: velas OHLC de la periodicidad elegida con su SMA."""
+    """«Velas»: velas OHLC de la periodicidad elegida con su SMA.
+
+    Args:
+        ctx: Datos y parámetros compartidos por todas las pestañas.
+        ticker: Acción principal.
+    """
     moneda = moneda_de(ticker)
     adjetivo = config.PERIODICIDADES[ctx.periodicidad]["adjetivo"]
     velas = ctx.velas[ctx.velas["ticker"] == ticker]
@@ -934,7 +1058,13 @@ en su momento.
 
 
 def pestana_rendimiento(ctx: Contexto, ticker: str, seleccion: list[str]) -> None:
-    """«Rendimiento»: crecimiento de CAPITAL_INICIAL para los tickers seleccionados."""
+    """«Rendimiento»: crecimiento de CAPITAL_INICIAL para los tickers seleccionados.
+
+    Args:
+        ctx: Datos y parámetros compartidos por todas las pestañas.
+        ticker: Acción principal (su línea va en dorado).
+        seleccion: Tickers elegidos en «Comparar» (barra lateral).
+    """
     if not seleccion:
         st.info("Elige al menos un ticker en **Comparar** (barra lateral).")
         return
@@ -989,7 +1119,13 @@ líneas igual de inclinadas crecieron al mismo % por periodo, aunque una valga m
 
 
 def pestana_riesgo(ctx: Contexto, seleccion: list[str]) -> None:
-    """«Riesgo»: dispersión volatilidad vs CAGR y tabla de métricas."""
+    """«Riesgo»: dispersión volatilidad vs CAGR y tabla de métricas.
+
+    Args:
+        ctx: Datos y parámetros compartidos por todas las pestañas.
+        seleccion: Tickers elegidos en «Comparar»; se usan si se elige
+            "Solo la selección de la barra lateral".
+    """
     alcance = st.radio(
         "Qué mostrar", ["Todas las acciones y benchmarks", "Solo la selección de la barra lateral (y sus benchmarks)"],
         horizontal=True, key="alcance_riesgo",
@@ -1069,7 +1205,12 @@ de la tasa libre de riesgo por cada unidad de volatilidad.
 
 
 def pestana_drawdown(ctx: Contexto, ticker: str) -> None:
-    """«Drawdown»: precio con máximo previo, área de drawdown y tiempo de recuperación."""
+    """«Drawdown»: precio con máximo previo, área de drawdown y tiempo de recuperación.
+
+    Args:
+        ctx: Datos y parámetros compartidos por todas las pestañas.
+        ticker: Acción principal.
+    """
     precios = ctx.cierres(ticker)
     if len(precios) < 2:
         st.warning("No hay suficientes periodos completos en el rango elegido.")
@@ -1089,10 +1230,15 @@ def pestana_drawdown(ctx: Contexto, ticker: str) -> None:
         st.markdown("En este rango el precio nunca cayó por debajo de su máximo previo.")
     elif recuperacion is None:
         transcurrido = len(precios.loc[valle:]) - 1
+        if transcurrido == 0:
+            despues = ("El valle es el último periodo completo: la caída podría seguir, y todavía no hay "
+                       "datos para medir la recuperación.")
+        else:
+            despues = (f"Desde el valle han pasado {periodos_texto(transcurrido, ctx.periodicidad)} "
+                       "sin volver al nivel del pico.")
         st.markdown(
             f"**Todavía no se recupera.** La peor caída fue de **{info['max_drawdown']:.1%}**, del pico de "
-            f"{pico:%Y-%m} al valle de {valle:%Y-%m}. Desde el valle han pasado "
-            f"{periodos_texto(transcurrido, ctx.periodicidad)} sin volver al nivel del pico."
+            f"{pico:%Y-%m} al valle de {valle:%Y-%m}. {despues}"
         )
     else:
         total = len(precios.loc[pico:info["fecha_recuperacion"]]) - 1
@@ -1120,7 +1266,14 @@ en el pico. Recuperarse cuesta más que caer: tras −50 % se necesita +100 %.
 
 
 def panel_vs_mercado(ctx: Contexto, ticker: str, clave: str) -> None:
-    """Un panel de «vs Mercado»: crecimiento, dispersión con beta y tarjetas."""
+    """Un panel de «vs Mercado»: crecimiento, dispersión con beta y tarjetas.
+
+    Args:
+        ctx: Datos y parámetros compartidos por todas las pestañas.
+        ticker: Acción del panel; se compara contra su benchmark.
+        clave: Sufijo para que los widgets de cada panel no choquen
+            (``"izq"``, ``"der"`` o ``"unico"``).
+    """
     bench = benchmark_de(ticker)
     a, m = ctx.cierres(ticker), ctx.cierres(bench)
     st.markdown(f"#### {etiqueta(ticker)}\nvs **{etiqueta(bench)}** · en {moneda_de(ticker)}")
@@ -1161,7 +1314,16 @@ def panel_vs_mercado(ctx: Contexto, ticker: str, clave: str) -> None:
 
 def tarjeta(columna: DeltaGenerator, titulo: str, valor: float, texto: str,
             motivo: str, ayuda: str) -> None:
-    """Un ``st.metric`` que, si el valor falta, explica por qué en lugar de mostrar un guion."""
+    """Un ``st.metric`` que, si el valor falta, explica por qué en lugar de mostrar un guion.
+
+    Args:
+        columna: Columna de Streamlit donde va la tarjeta.
+        titulo: Nombre de la métrica.
+        valor: Valor numérico (puede ser ``NaN``).
+        texto: Valor ya formateado (``"68.0%"``).
+        motivo: Por qué falta el valor, si es ``NaN``.
+        ayuda: Texto del ícono de ayuda.
+    """
     if es_nan(valor):
         columna.metric(titulo, "n/d", delta=motivo, delta_color="gray", delta_arrow="off", help=ayuda, border=True)
     else:
@@ -1169,7 +1331,12 @@ def tarjeta(columna: DeltaGenerator, titulo: str, valor: float, texto: str,
 
 
 def pestana_vs_mercado(ctx: Contexto, ticker: str) -> None:
-    """«vs Mercado»: una o dos acciones contra su benchmark, lado a lado."""
+    """«vs Mercado»: una o dos acciones contra su benchmark, lado a lado.
+
+    Args:
+        ctx: Datos y parámetros compartidos por todas las pestañas.
+        ticker: Acción de la izquierda (o la única, si se apaga "Dos acciones lado a lado").
+    """
     lado_a_lado = st.toggle("Dos acciones lado a lado", value=True, key="vs_doble")
     opciones = list(config.TICKERS)
     if lado_a_lado:
@@ -1209,10 +1376,20 @@ a la recta.
 
 
 def pestana_backtest(ctx: Contexto, ticker: str) -> None:
-    """«Backtest»: regla SMA contra buy & hold, sin información del futuro."""
+    """«Backtest»: regla SMA contra buy & hold, sin información del futuro.
+
+    Args:
+        ctx: Datos y parámetros compartidos por todas las pestañas.
+        ticker: Activo con el que abre el selector de la pestaña.
+    """
     opciones = list(config.TICKERS) + list(config.BENCHMARKS)
+    # El selector tiene key, así que Streamlit recuerda la elección. Si cambia la acción
+    # principal en la barra lateral, el backtest la sigue; si no, se respeta lo que elegiste aquí.
+    if st.session_state.get("_backtest_sigue_a") != ticker:
+        st.session_state["activo_backtest"] = ticker
+        st.session_state["_backtest_sigue_a"] = ticker
     activo = st.selectbox("Activo para el backtest (también puedes elegir un benchmark)", opciones,
-                          index=opciones.index(ticker), format_func=etiqueta_con_tipo, key="activo_backtest")
+                          format_func=etiqueta_con_tipo, key="activo_backtest")
     moneda = moneda_de(activo)
     mostrar_avisos_datos(ctx, [activo], compacto=True)
     res = metricas.backtest_sma(ctx.cierres(activo), ctx.ventana, ctx.tasa(activo),
@@ -1262,7 +1439,12 @@ existía. Las bandas sombreadas son los periodos fuera del mercado.
 
 
 def pestana_datos(ctx: Contexto, ticker: str) -> None:
-    """«Datos»: vista previa de la tabla tidy para BI y descarga en CSV."""
+    """«Datos»: vista previa de la tabla tidy para BI y descarga en CSV.
+
+    Args:
+        ctx: Datos y parámetros compartidos por todas las pestañas.
+        ticker: Acción de la vista previa.
+    """
     tidy = construir_tidy(ctx.hoy.isoformat(), ctx.inicio, ctx.fin, ctx.periodicidad, ctx.ventana,
                           tuple(sorted(ctx.tasas.items())))
     st.markdown(
